@@ -43,6 +43,8 @@ const anim = {
 function randBlink() { return 3000 + Math.random() * 4000; }
 
 // ── スプライト ────────────────────────────────────────────────
+const SPRITE_INSET = 3;  // 各フレーム四辺から除外するピクセル数（境界線除去）
+
 let spriteImg = null;   // オリジナル画像（設定変更時の再処理用）
 let frames    = [];
 let frameW    = 0, frameH = 0;
@@ -78,12 +80,15 @@ function buildFrames() {
 }
 
 function extractFrame(sx, sy, tr, tg, tb) {
+  const inset = SPRITE_INSET;
+  const srcW  = frameW - 2 * inset;
+  const srcH  = frameH - 2 * inset;
   const oc = document.createElement('canvas');
-  oc.width  = frameW;
-  oc.height = frameH;
+  oc.width  = srcW;
+  oc.height = srcH;
   const c = oc.getContext('2d');
-  c.drawImage(spriteImg, sx, sy, frameW, frameH, 0, 0, frameW, frameH);
-  const id = c.getImageData(0, 0, frameW, frameH);
+  c.drawImage(spriteImg, sx + inset, sy + inset, srcW, srcH, 0, 0, srcW, srcH);
+  const id = c.getImageData(0, 0, srcW, srcH);
   removeChromaKey(id.data, tr, tg, tb);
   c.putImageData(id, 0, 0);
   return oc;
@@ -362,6 +367,39 @@ function updatePresetBadge(slot) {
   badge.classList.toggle('saved', has);
 }
 
+function exportPresets() {
+  const data = {
+    slot1: localStorage.getItem('kp-preset-1'),
+    slot2: localStorage.getItem('kp-preset-2'),
+  };
+  if (!data.slot1 && !data.slot2) { alert('保存済みのプリセットがありません。'); return; }
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'kuchipaku-presets.json';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(a.href);
+}
+
+function importPresets(file) {
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const data = JSON.parse(e.target.result);
+      let count = 0;
+      if (data.slot1) { localStorage.setItem('kp-preset-1', data.slot1); count++; }
+      if (data.slot2) { localStorage.setItem('kp-preset-2', data.slot2); count++; }
+      [1, 2].forEach(updatePresetBadge);
+      count ? alert(`${count}件のプリセットを読み込みました。`) : alert('プリセットデータが見つかりませんでした。');
+    } catch {
+      alert('ファイルの読み込みに失敗しました。\n正しいプリセットファイルを選択してください。');
+    }
+  };
+  reader.readAsText(file);
+}
+
 // ── UI 配線 ────────────────────────────────────────────────────
 function setupUI() {
   // マイク
@@ -439,6 +477,15 @@ function setupUI() {
     document.getElementById(`btn-save-${slot}`).addEventListener('click', () => savePreset(slot));
     document.getElementById(`btn-load-${slot}`).addEventListener('click', () => loadPreset(slot));
     updatePresetBadge(slot);
+  });
+  document.getElementById('btn-preset-export')?.addEventListener('click', exportPresets);
+  document.getElementById('btn-preset-import')?.addEventListener('click', () => {
+    document.getElementById('file-preset')?.click();
+  });
+  document.getElementById('file-preset')?.addEventListener('change', e => {
+    const file = e.target.files[0];
+    if (file) importPresets(file);
+    e.target.value = '';
   });
 
   // 配信モード
