@@ -49,6 +49,46 @@
         </section>
 
         <section class="sec">
+          <p class="sec-label">切り取り位置調整</p>
+          <div class="row">
+            <span class="lbl">フレーム</span>
+            <select id="crop-frame-sel" class="crop-frame-sel">
+              <option value="0">口あき / 目あき</option>
+              <option value="1">口あき / 目とじ</option>
+              <option value="2">口とじ / 目あき</option>
+              <option value="3">口とじ / 目とじ</option>
+            </select>
+          </div>
+          <div class="row">
+            <span class="lbl-xs">X</span>
+            <input type="range" id="sl-crop-x" min="-200" max="200" value="0" step="1">
+            <input type="number" id="n-crop-x" class="num-input-xs" min="-200" max="200" value="0">
+            <span class="unit">px</span>
+          </div>
+          <div class="adj-row">
+            <button class="adj-btn" id="crop-x-mm">◀◀</button>
+            <button class="adj-btn" id="crop-x-m">◀</button>
+            <span class="adj-spacer"></span>
+            <button class="adj-btn" id="crop-x-p">▶</button>
+            <button class="adj-btn" id="crop-x-pp">▶▶</button>
+          </div>
+          <div class="row">
+            <span class="lbl-xs">Y</span>
+            <input type="range" id="sl-crop-y" min="-200" max="200" value="0" step="1">
+            <input type="number" id="n-crop-y" class="num-input-xs" min="-200" max="200" value="0">
+            <span class="unit">px</span>
+          </div>
+          <div class="adj-row">
+            <button class="adj-btn" id="crop-y-mm">▲▲</button>
+            <button class="adj-btn" id="crop-y-m">▲</button>
+            <span class="adj-spacer"></span>
+            <button class="adj-btn" id="crop-y-p">▼</button>
+            <button class="adj-btn" id="crop-y-pp">▼▼</button>
+          </div>
+          <button id="btn-crop-reset" class="btn secondary sm w100">このフレームをリセット</button>
+        </section>
+
+        <section class="sec">
           <p class="sec-label">マイク</p>
           <button id="btn-mic" class="btn secondary w100">マイク開始</button>
           <div class="row">

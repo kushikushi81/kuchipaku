@@ -19,6 +19,12 @@ const cfg = {
   charSize:         300,
   chromaColor:      '#00ff00',  // 除去するキャラクター背景色
   chromaTolerance:  80,         // 色距離の許容範囲（0–200）
+  cropOffsets: [
+    { x: 0, y: 0 },
+    { x: 0, y: 0 },
+    { x: 0, y: 0 },
+    { x: 0, y: 0 },
+  ],
 };
 
 // ── 音声状態 ──────────────────────────────────────────────────
@@ -41,6 +47,8 @@ const anim = {
 };
 
 function randBlink() { return 3000 + Math.random() * 4000; }
+
+let refreshCropUI = () => {};
 
 // ── スプライト ────────────────────────────────────────────────
 const SPRITE_INSET = 3;  // 各フレーム四辺から除外するピクセル数（境界線除去）
@@ -76,10 +84,13 @@ function buildFrames() {
     [frameW, 0     ],
     [0,      frameH],
     [frameW, frameH],
-  ].map(([sx, sy]) => extractFrame(sx, sy, tr, tg, tb));
+  ].map(([sx, sy], i) => {
+    const { x: dx, y: dy } = cfg.cropOffsets[i];
+    return extractFrame(sx, sy, tr, tg, tb, dx, dy);
+  });
 }
 
-function extractFrame(sx, sy, tr, tg, tb) {
+function extractFrame(sx, sy, tr, tg, tb, dx = 0, dy = 0) {
   const inset = SPRITE_INSET;
   const srcW  = frameW - 2 * inset;
   const srcH  = frameH - 2 * inset;
@@ -87,7 +98,7 @@ function extractFrame(sx, sy, tr, tg, tb) {
   oc.width  = srcW;
   oc.height = srcH;
   const c = oc.getContext('2d');
-  c.drawImage(spriteImg, sx + inset, sy + inset, srcW, srcH, 0, 0, srcW, srcH);
+  c.drawImage(spriteImg, sx + inset + dx, sy + inset + dy, srcW, srcH, 0, 0, srcW, srcH);
   const id = c.getImageData(0, 0, srcW, srcH);
   removeChromaKey(id.data, tr, tg, tb);
   c.putImageData(id, 0, 0);
@@ -108,11 +119,26 @@ function removeChromaKey(data, tr, tg, tb) {
   }
 }
 
+function rebuildFrame(i) {
+  if (!spriteImg || !frames.length) return;
+  const [tr, tg, tb] = hexToRgb(cfg.chromaColor);
+  const origins = [[0, 0], [frameW, 0], [0, frameH], [frameW, frameH]];
+  const [sx, sy] = origins[i];
+  const { x: dx, y: dy } = cfg.cropOffsets[i];
+  frames[i] = extractFrame(sx, sy, tr, tg, tb, dx, dy);
+}
+
 // 許容範囲スライダー操作中の連続再処理を抑制
 let rebuildTimer = null;
 function scheduleRebuild() {
   clearTimeout(rebuildTimer);
   rebuildTimer = setTimeout(buildFrames, 250);
+}
+
+let saveCropTimer = null;
+function scheduleSaveCropOffsets() {
+  clearTimeout(saveCropTimer);
+  saveCropTimer = setTimeout(() => dbSet('cropOffsets', cfg.cropOffsets), 500);
 }
 
 // ── IndexedDB（画像の永続化） ─────────────────────────────────
@@ -326,6 +352,7 @@ function savePreset(slot) {
     bgColor:         cfg.bgColor,
     chromaColor:     cfg.chromaColor,
     chromaTolerance: cfg.chromaTolerance,
+    cropOffsets:     cfg.cropOffsets.map(o => ({ ...o })),
   }));
   updatePresetBadge(slot);
 }
@@ -354,6 +381,11 @@ function loadPreset(slot) {
   if (p.chromaColor) {
     cfg.chromaColor = p.chromaColor;
     document.getElementById('chroma-color').value = p.chromaColor;
+  }
+
+  if (p.cropOffsets) {
+    cfg.cropOffsets = p.cropOffsets.map(o => ({ ...o }));
+    refreshCropUI();
   }
 
   buildFrames();
@@ -400,8 +432,65 @@ function importPresets(file) {
   reader.readAsText(file);
 }
 
+// ── 切り取り位置調整 UI ────────────────────────────────────────
+function setupCropUI() {
+  let activeFr = 0;
+  const sel = document.getElementById('crop-frame-sel');
+  const slX = document.getElementById('sl-crop-x');
+  const nX  = document.getElementById('n-crop-x');
+  const slY = document.getElementById('sl-crop-y');
+  const nY  = document.getElementById('n-crop-y');
+
+  function syncUI() {
+    const o = cfg.cropOffsets[activeFr];
+    slX.value = nX.value = o.x;
+    slY.value = nY.value = o.y;
+  }
+
+  function applyX(v) {
+    v = Math.max(-200, Math.min(200, Math.round(v)));
+    cfg.cropOffsets[activeFr].x = v;
+    slX.value = nX.value = v;
+    rebuildFrame(activeFr);
+    scheduleSaveCropOffsets();
+  }
+
+  function applyY(v) {
+    v = Math.max(-200, Math.min(200, Math.round(v)));
+    cfg.cropOffsets[activeFr].y = v;
+    slY.value = nY.value = v;
+    rebuildFrame(activeFr);
+    scheduleSaveCropOffsets();
+  }
+
+  sel.addEventListener('change', () => { activeFr = +sel.value; syncUI(); });
+
+  slX.addEventListener('input',  () => applyX(+slX.value));
+  nX.addEventListener('change',  () => applyX(+nX.value));
+  nX.addEventListener('keydown', e => { if (e.key === 'Enter') applyX(+nX.value); });
+
+  slY.addEventListener('input',  () => applyY(+slY.value));
+  nY.addEventListener('change',  () => applyY(+nY.value));
+  nY.addEventListener('keydown', e => { if (e.key === 'Enter') applyY(+nY.value); });
+
+  document.getElementById('crop-x-mm').addEventListener('click', () => applyX(cfg.cropOffsets[activeFr].x - 10));
+  document.getElementById('crop-x-m' ).addEventListener('click', () => applyX(cfg.cropOffsets[activeFr].x -  1));
+  document.getElementById('crop-x-p' ).addEventListener('click', () => applyX(cfg.cropOffsets[activeFr].x +  1));
+  document.getElementById('crop-x-pp').addEventListener('click', () => applyX(cfg.cropOffsets[activeFr].x + 10));
+  document.getElementById('crop-y-mm').addEventListener('click', () => applyY(cfg.cropOffsets[activeFr].y - 10));
+  document.getElementById('crop-y-m' ).addEventListener('click', () => applyY(cfg.cropOffsets[activeFr].y -  1));
+  document.getElementById('crop-y-p' ).addEventListener('click', () => applyY(cfg.cropOffsets[activeFr].y +  1));
+  document.getElementById('crop-y-pp').addEventListener('click', () => applyY(cfg.cropOffsets[activeFr].y + 10));
+
+  document.getElementById('btn-crop-reset').addEventListener('click', () => { applyX(0); applyY(0); });
+
+  refreshCropUI = () => { activeFr = 0; sel.value = '0'; syncUI(); };
+}
+
 // ── UI 配線 ────────────────────────────────────────────────────
 function setupUI() {
+  setupCropUI();
+
   // マイク
   document.getElementById('btn-mic').addEventListener('click', () => {
     audio.active ? stopMic() : startMic();
@@ -518,6 +607,12 @@ if ('serviceWorker' in navigator) {
 async function boot() {
   initCanvas();
   setupUI();
+
+  const savedCropOffsets = await dbGet('cropOffsets');
+  if (savedCropOffsets) {
+    cfg.cropOffsets = savedCropOffsets;
+    refreshCropUI();
+  }
 
   try {
     // IndexedDB に保存済みの画像があれば復元
