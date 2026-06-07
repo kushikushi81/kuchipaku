@@ -1,0 +1,498 @@
+'use strict';
+
+// ── スプライトシート フレーム定義 ─────────────────────────────
+// 2×2 グリッド:
+//   [0] 左上: 口あき / 目あき  → 話中メイン
+//   [1] 右上: 口あき / 目とじ  → 話中まばたき
+//   [2] 左下: 口とじ / 目あき  → 無音
+//   [3] 右下: 口とじ / 目とじ  → 無音まばたき
+const F = { TALK: 0, TALK_BLINK: 1, IDLE: 2, IDLE_BLINK: 3 };
+
+// ── 設定 ──────────────────────────────────────────────────────
+const cfg = {
+  sensitivity:      0.015,
+  holdMs:           150,
+  mouthMs:          120,
+  bgMode:           'transparent',
+  bgColor:          '#222244',
+  bgImage:          null,
+  charSize:         300,
+  chromaColor:      '#00ff00',  // 除去するキャラクター背景色
+  chromaTolerance:  80,         // 色距離の許容範囲（0–200）
+};
+
+// ── 音声状態 ──────────────────────────────────────────────────
+const audio = {
+  ctx:      null,
+  analyser: null,
+  stream:   null,
+  active:   false,
+};
+
+// ── アニメーション状態 ────────────────────────────────────────
+const anim = {
+  talking:    false,
+  holdTimer:  0,
+  mouthOpen:  false,
+  mouthTimer: 0,
+  blinking:   false,
+  blinkTimer: 0,
+  blinkNext:  randBlink(),
+};
+
+function randBlink() { return 3000 + Math.random() * 4000; }
+
+// ── スプライト ────────────────────────────────────────────────
+let spriteImg = null;   // オリジナル画像（設定変更時の再処理用）
+let frames    = [];
+let frameW    = 0, frameH = 0;
+
+function hexToRgb(hex) {
+  const n = parseInt(hex.replace('#', ''), 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+async function loadSpriteFromUrl(url) {
+  const img = await new Promise((res, rej) => {
+    const i = new Image();
+    i.onload  = () => res(i);
+    i.onerror = () => rej(new Error('画像の読み込みに失敗しました'));
+    i.src = url;
+  });
+  spriteImg = img;
+  buildFrames();
+}
+
+// クロマキー設定が変わったときに呼び直す（spriteImg は再利用）
+function buildFrames() {
+  if (!spriteImg) return;
+  frameW = (spriteImg.width  / 2) | 0;
+  frameH = (spriteImg.height / 2) | 0;
+  const [tr, tg, tb] = hexToRgb(cfg.chromaColor);
+  frames = [
+    [0,      0     ],
+    [frameW, 0     ],
+    [0,      frameH],
+    [frameW, frameH],
+  ].map(([sx, sy]) => extractFrame(sx, sy, tr, tg, tb));
+}
+
+function extractFrame(sx, sy, tr, tg, tb) {
+  const oc = document.createElement('canvas');
+  oc.width  = frameW;
+  oc.height = frameH;
+  const c = oc.getContext('2d');
+  c.drawImage(spriteImg, sx, sy, frameW, frameH, 0, 0, frameW, frameH);
+  const id = c.getImageData(0, 0, frameW, frameH);
+  removeChromaKey(id.data, tr, tg, tb);
+  c.putImageData(id, 0, 0);
+  return oc;
+}
+
+function removeChromaKey(data, tr, tg, tb) {
+  const tol  = cfg.chromaTolerance;
+  const soft = tol * 1.4;
+  for (let i = 0; i < data.length; i += 4) {
+    const dr = data[i] - tr, dg = data[i+1] - tg, db = data[i+2] - tb;
+    const dist = Math.sqrt(dr*dr + dg*dg + db*db);
+    if (dist < tol) {
+      data[i + 3] = 0;
+    } else if (dist < soft) {
+      data[i + 3] = Math.round(data[i+3] * (dist - tol) / (soft - tol));
+    }
+  }
+}
+
+// 許容範囲スライダー操作中の連続再処理を抑制
+let rebuildTimer = null;
+function scheduleRebuild() {
+  clearTimeout(rebuildTimer);
+  rebuildTimer = setTimeout(buildFrames, 250);
+}
+
+// ── IndexedDB（画像の永続化） ─────────────────────────────────
+let _db = null;
+
+async function openDB() {
+  if (_db) return _db;
+  return new Promise((res, rej) => {
+    const req = indexedDB.open('KuchiPaku', 1);
+    req.onupgradeneeded = e => e.target.result.createObjectStore('kv');
+    req.onsuccess = e => { _db = e.target.result; res(_db); };
+    req.onerror   = e => rej(e.target.error);
+  });
+}
+
+async function dbGet(key) {
+  const db = await openDB();
+  return new Promise((res, rej) => {
+    const req = db.transaction('kv', 'readonly').objectStore('kv').get(key);
+    req.onsuccess = () => res(req.result ?? null);
+    req.onerror   = e => rej(e.target.error);
+  });
+}
+
+async function dbSet(key, value) {
+  const db = await openDB();
+  return new Promise((res, rej) => {
+    const req = db.transaction('kv', 'readwrite').objectStore('kv').put(value, key);
+    req.onsuccess = () => res();
+    req.onerror   = e => rej(e.target.error);
+  });
+}
+
+// ── Canvas ────────────────────────────────────────────────────
+let cv, cx;
+
+function initCanvas() {
+  cv = document.getElementById('cv');
+  cx = cv.getContext('2d');
+  resizeCanvas(cfg.charSize);
+}
+
+function resizeCanvas(size) {
+  cv.width  = cv.height = size;
+  cv.style.width = cv.style.height = size + 'px';
+}
+
+// ── マイク ────────────────────────────────────────────────────
+async function startMic() {
+  if (audio.active) return;
+  try {
+    if (!audio.ctx) audio.ctx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audio.ctx.state === 'suspended') await audio.ctx.resume();
+    audio.stream   = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    audio.analyser = audio.ctx.createAnalyser();
+    audio.analyser.fftSize = 256;
+    audio.ctx.createMediaStreamSource(audio.stream).connect(audio.analyser);
+    audio.active = true;
+    updateMicBtn(true);
+  } catch (err) {
+    alert('マイクへのアクセスが許可されませんでした。\nブラウザのマイク権限設定を確認してください。');
+    console.error(err);
+  }
+}
+
+function stopMic() {
+  if (!audio.active) return;
+  audio.stream?.getTracks().forEach(t => t.stop());
+  audio.stream = audio.analyser = null;
+  audio.active = false;
+  updateMicBtn(false);
+}
+
+function getVolume() {
+  if (!audio.analyser) return 0;
+  const buf = new Uint8Array(audio.analyser.fftSize);
+  audio.analyser.getByteTimeDomainData(buf);
+  let sum = 0;
+  for (const v of buf) { const n = v / 128 - 1; sum += n * n; }
+  return Math.sqrt(sum / buf.length);
+}
+
+// ── アニメーション更新 ────────────────────────────────────────
+function updateAnim(dt) {
+  const vol = getVolume();
+
+  if (vol > cfg.sensitivity) {
+    anim.talking   = true;
+    anim.holdTimer = cfg.holdMs;
+  } else {
+    anim.holdTimer -= dt;
+    if (anim.holdTimer <= 0) anim.talking = false;
+  }
+
+  if (anim.talking) {
+    anim.mouthTimer += dt;
+    if (anim.mouthTimer >= cfg.mouthMs) {
+      anim.mouthTimer = 0;
+      anim.mouthOpen  = !anim.mouthOpen;
+    }
+  } else {
+    anim.mouthOpen  = false;
+    anim.mouthTimer = 0;
+  }
+
+  anim.blinkTimer += dt;
+  if (!anim.blinking && anim.blinkTimer >= anim.blinkNext) {
+    anim.blinking   = true;
+    anim.blinkTimer = 0;
+  }
+  if (anim.blinking && anim.blinkTimer >= 140) {
+    anim.blinking   = false;
+    anim.blinkTimer = 0;
+    anim.blinkNext  = randBlink();
+  }
+
+  const fill = document.getElementById('vfill');
+  if (fill) {
+    fill.style.width = Math.min(vol / 0.1 * 100, 100) + '%';
+    fill.classList.toggle('talking', anim.talking);
+  }
+}
+
+function pickFrame() {
+  if (anim.talking) {
+    return anim.mouthOpen
+      ? (anim.blinking ? F.TALK_BLINK : F.TALK)
+      : (anim.blinking ? F.IDLE_BLINK : F.IDLE);
+  }
+  return anim.blinking ? F.IDLE_BLINK : F.IDLE;
+}
+
+// ── 描画 ──────────────────────────────────────────────────────
+function render() {
+  cx.clearRect(0, 0, cv.width, cv.height);
+  switch (cfg.bgMode) {
+    case 'chroma': cx.fillStyle = '#00FF00'; cx.fillRect(0, 0, cv.width, cv.height); break;
+    case 'color':  cx.fillStyle = cfg.bgColor; cx.fillRect(0, 0, cv.width, cv.height); break;
+    case 'image':  if (cfg.bgImage) cx.drawImage(cfg.bgImage, 0, 0, cv.width, cv.height); break;
+  }
+  if (frames.length) cx.drawImage(frames[pickFrame()], 0, 0, cv.width, cv.height);
+}
+
+// ── メインループ ──────────────────────────────────────────────
+let lastTs = null;
+
+function loop(ts) {
+  const dt = lastTs !== null ? Math.min(ts - lastTs, 100) : 16;
+  lastTs = ts;
+  updateAnim(dt);
+  render();
+  requestAnimationFrame(loop);
+}
+
+// ── 配信モード ────────────────────────────────────────────────
+let isBroadcast = false;
+
+function setBroadcast(on) {
+  isBroadcast = on;
+  document.body.classList.toggle('with-ui', !on);
+  ['hd', 'panel', 'vmeter'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = on ? 'none' : '';
+  });
+  document.getElementById('btn-exit').style.display = on ? '' : 'none';
+  resizeCanvas(on ? Math.min(window.innerWidth, window.innerHeight) : cfg.charSize);
+}
+
+// ── UI ヘルパー ───────────────────────────────────────────────
+function updateMicBtn(on) {
+  const b = document.getElementById('btn-mic');
+  if (!b) return;
+  b.textContent = on ? 'マイク停止' : 'マイク開始';
+  b.className   = 'btn w100 ' + (on ? 'danger' : 'secondary');
+}
+
+function linkSlider(slId, numId, applyFn) {
+  const sl   = document.getElementById(slId);
+  const ni   = document.getElementById(numId);
+  const step = +sl.step || 1;
+
+  const fromSlider = () => { ni.value = sl.value; applyFn(+sl.value); };
+  const fromNum    = () => {
+    let v = parseFloat(ni.value);
+    if (isNaN(v)) v = +sl.min;
+    v = Math.max(+sl.min, Math.min(+sl.max, v));
+    v = Math.round(v / step) * step;
+    sl.value = ni.value = v;
+    applyFn(v);
+  };
+
+  sl.addEventListener('input', fromSlider);
+  ni.addEventListener('change', fromNum);
+  ni.addEventListener('keydown', e => { if (e.key === 'Enter') fromNum(); });
+  fromSlider();
+}
+
+function setSliderNum(slId, numId, val) {
+  document.getElementById(slId).value = val;
+  document.getElementById(numId).value = val;
+}
+
+// ── プリセット ────────────────────────────────────────────────
+function savePreset(slot) {
+  localStorage.setItem(`kp-preset-${slot}`, JSON.stringify({
+    sensRaw:         Math.round(cfg.sensitivity * 1000),
+    holdMs:          cfg.holdMs,
+    mouthMs:         cfg.mouthMs,
+    charSize:        cfg.charSize,
+    bgMode:          cfg.bgMode,
+    bgColor:         cfg.bgColor,
+    chromaColor:     cfg.chromaColor,
+    chromaTolerance: cfg.chromaTolerance,
+  }));
+  updatePresetBadge(slot);
+}
+
+function loadPreset(slot) {
+  const raw = localStorage.getItem(`kp-preset-${slot}`);
+  if (!raw) { alert(`スロット${slot}にはまだプリセットが保存されていません。`); return; }
+  const p = JSON.parse(raw);
+
+  setSliderNum('sl-sens',   'n-sens',   p.sensRaw);            cfg.sensitivity     = p.sensRaw / 1000;
+  setSliderNum('sl-hold',   'n-hold',   p.holdMs);             cfg.holdMs          = p.holdMs;
+  setSliderNum('sl-speed',  'n-speed',  p.mouthMs);            cfg.mouthMs         = p.mouthMs;
+  setSliderNum('sl-size',   'n-size',   p.charSize);           cfg.charSize        = p.charSize;
+  setSliderNum('sl-chroma', 'n-chroma', p.chromaTolerance ?? 80); cfg.chromaTolerance = p.chromaTolerance ?? 80;
+
+  if (!isBroadcast) resizeCanvas(p.charSize);
+
+  cfg.bgMode  = p.bgMode;
+  cfg.bgColor = p.bgColor;
+  const r = document.querySelector(`input[name=bg][value="${p.bgMode}"]`);
+  if (r) r.checked = true;
+  document.getElementById('row-color').classList.toggle('hidden', p.bgMode !== 'color');
+  document.getElementById('row-image').classList.toggle('hidden', p.bgMode !== 'image');
+  document.getElementById('bg-color').value = p.bgColor;
+
+  if (p.chromaColor) {
+    cfg.chromaColor = p.chromaColor;
+    document.getElementById('chroma-color').value = p.chromaColor;
+  }
+
+  buildFrames();
+}
+
+function updatePresetBadge(slot) {
+  const badge = document.getElementById(`preset-badge-${slot}`);
+  if (!badge) return;
+  const has = !!localStorage.getItem(`kp-preset-${slot}`);
+  badge.textContent = has ? '保存済' : '未保存';
+  badge.classList.toggle('saved', has);
+}
+
+// ── UI 配線 ────────────────────────────────────────────────────
+function setupUI() {
+  // マイク
+  document.getElementById('btn-mic').addEventListener('click', () => {
+    audio.active ? stopMic() : startMic();
+  });
+
+  // スライダー系
+  linkSlider('sl-sens',   'n-sens',   v => { cfg.sensitivity = v / 1000; });
+  linkSlider('sl-hold',   'n-hold',   v => { cfg.holdMs      = v; });
+  linkSlider('sl-speed',  'n-speed',  v => { cfg.mouthMs     = v; });
+  linkSlider('sl-size',   'n-size',   v => {
+    cfg.charSize = v;
+    if (!isBroadcast) resizeCanvas(v);
+  });
+
+  // 背景モード
+  document.querySelectorAll('input[name=bg]').forEach(radio => {
+    radio.addEventListener('change', () => {
+      cfg.bgMode = radio.value;
+      document.getElementById('row-color').classList.toggle('hidden', radio.value !== 'color');
+      document.getElementById('row-image').classList.toggle('hidden', radio.value !== 'image');
+    });
+  });
+  document.getElementById('bg-color').addEventListener('input', e => { cfg.bgColor = e.target.value; });
+
+  // 背景画像
+  document.getElementById('btn-img').addEventListener('click', () => document.getElementById('file-img').click());
+  document.getElementById('file-img').addEventListener('change', e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const img = new Image();
+    img.onload = () => { cfg.bgImage = img; };
+    img.src = URL.createObjectURL(file);
+    document.getElementById('img-name').textContent = file.name;
+  });
+
+  // ── キャラクター画像変更 ──────────────────────────────────
+  document.getElementById('btn-char-img').addEventListener('click', () => {
+    document.getElementById('file-char').click();
+  });
+
+  document.getElementById('file-char').addEventListener('change', async e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const btn = document.getElementById('btn-char-img');
+    btn.textContent = '読み込み中…';
+    btn.disabled = true;
+    try {
+      await loadSpriteFromUrl(URL.createObjectURL(file));
+      document.getElementById('char-img-name').textContent = file.name;
+      await dbSet('charImage', file);
+      await dbSet('charImageName', file.name);
+    } catch {
+      alert('画像の読み込みに失敗しました。\n2×2スプライトシート形式の画像を選択してください。');
+    } finally {
+      btn.textContent = '画像を変更';
+      btn.disabled = false;
+    }
+  });
+
+  // ── クロマキー色・許容範囲 ───────────────────────────────
+  document.getElementById('chroma-color').addEventListener('change', e => {
+    cfg.chromaColor = e.target.value;
+    buildFrames();
+  });
+
+  linkSlider('sl-chroma', 'n-chroma', v => {
+    cfg.chromaTolerance = v;
+    scheduleRebuild();
+  });
+
+  // プリセット
+  [1, 2].forEach(slot => {
+    document.getElementById(`btn-save-${slot}`).addEventListener('click', () => savePreset(slot));
+    document.getElementById(`btn-load-${slot}`).addEventListener('click', () => loadPreset(slot));
+    updatePresetBadge(slot);
+  });
+
+  // 配信モード
+  document.getElementById('btn-live').addEventListener('click', () => setBroadcast(true));
+  document.getElementById('btn-exit').addEventListener('click', () => setBroadcast(false));
+
+  window.addEventListener('resize', () => {
+    if (isBroadcast) resizeCanvas(Math.min(window.innerWidth, window.innerHeight));
+  });
+
+  // OBS URLパラメータ
+  const params = new URLSearchParams(location.search);
+  if (params.get('obs') === '1') {
+    const bg = params.get('bg') || 'transparent';
+    cfg.bgMode = bg;
+    const r = document.querySelector(`input[name=bg][value="${bg}"]`);
+    if (r) r.checked = true;
+    document.getElementById('row-color').classList.toggle('hidden', bg !== 'color');
+    document.getElementById('row-image').classList.toggle('hidden', bg !== 'image');
+    setTimeout(() => setBroadcast(true), 0);
+  }
+}
+
+// ── PWA ──────────────────────────────────────────────────────
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('./service-worker.js').catch(() => {});
+}
+
+// ── 起動 ──────────────────────────────────────────────────────
+async function boot() {
+  initCanvas();
+  setupUI();
+
+  try {
+    // IndexedDB に保存済みの画像があれば復元
+    const savedFile = await dbGet('charImage');
+    if (savedFile) {
+      await loadSpriteFromUrl(URL.createObjectURL(savedFile));
+      const name = await dbGet('charImageName');
+      if (name) document.getElementById('char-img-name').textContent = name;
+    } else {
+      await loadSpriteFromUrl('character.png');
+    }
+  } catch {
+    // フォールバック: デフォルト画像
+    try {
+      await loadSpriteFromUrl('character.png');
+    } catch {
+      alert('character.png の読み込みに失敗しました。\nindex.html と同じフォルダにあるか確認してください。');
+      return;
+    }
+  }
+
+  requestAnimationFrame(loop);
+}
+
+document.addEventListener('DOMContentLoaded', boot);

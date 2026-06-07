@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="KuchiPaku">
+  <title>KuchiPaku</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="character.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="with-ui">
+
+  <div id="app">
+    <header id="hd">
+      <span class="logo">KuchiPaku</span>
+      <button id="btn-live" class="btn primary">配信モード</button>
+    </header>
+
+    <div id="stage">
+      <!-- キャラクター表示エリア -->
+      <div id="canvas-area">
+        <div id="checker-wrap">
+          <canvas id="cv"></canvas>
+        </div>
+        <div id="vmeter"><div id="vfill"></div></div>
+      </div>
+
+      <!-- コントロールパネル -->
+      <aside id="panel">
+
+        <section class="sec">
+          <p class="sec-label">キャラクター画像</p>
+          <button id="btn-char-img" class="btn secondary w100">画像を変更</button>
+          <input type="file" id="file-char" accept="image/*" style="display:none">
+          <p id="char-img-name" class="char-img-name">character.png</p>
+          <div class="row">
+            <span class="lbl">背景色</span>
+            <input type="color" id="chroma-color" value="#00ff00">
+            <span class="hint-inline">除去する色</span>
+          </div>
+          <div class="row">
+            <span class="lbl">許容範囲</span>
+            <input type="range" id="sl-chroma" min="10" max="200" value="80" step="5">
+            <input type="number" id="n-chroma" class="num-input" min="10" max="200" step="5" value="80">
+          </div>
+        </section>
+
+        <section class="sec">
+          <p class="sec-label">マイク</p>
+          <button id="btn-mic" class="btn secondary w100">マイク開始</button>
+          <div class="row">
+            <span class="lbl">感度</span>
+            <input type="range" id="sl-sens" min="1" max="100" value="15">
+            <input type="number" id="n-sens" class="num-input" min="1" max="100" value="15">
+          </div>
+          <div class="row">
+            <span class="lbl">ホールド</span>
+            <input type="range" id="sl-hold" min="0" max="600" value="150" step="10">
+            <input type="number" id="n-hold" class="num-input" min="0" max="600" step="10" value="150">
+            <span class="unit">ms</span>
+          </div>
+        </section>
+
+        <section class="sec">
+          <p class="sec-label">口パク</p>
+          <div class="row">
+            <span class="lbl">速度</span>
+            <input type="range" id="sl-speed" min="40" max="400" value="120" step="10">
+            <input type="number" id="n-speed" class="num-input" min="40" max="400" step="10" value="120">
+            <span class="unit">ms</span>
+          </div>
+        </section>
+
+        <section class="sec">
+          <p class="sec-label">背景</p>
+          <div class="radios">
+            <label><input type="radio" name="bg" value="transparent" checked>透過</label>
+            <label><input type="radio" name="bg" value="chroma">クロマキー緑</label>
+            <label><input type="radio" name="bg" value="color">カスタムカラー</label>
+            <label><input type="radio" name="bg" value="image">背景画像</label>
+          </div>
+          <div id="row-color" class="extra-row hidden">
+            <span class="lbl">色</span>
+            <input type="color" id="bg-color" value="#222244">
+          </div>
+          <div id="row-image" class="extra-row hidden">
+            <button id="btn-img" class="btn secondary">画像選択</button>
+            <span id="img-name" class="fname">未選択</span>
+            <input type="file" id="file-img" accept="image/*" style="display:none">
+          </div>
+        </section>
+
+        <section class="sec">
+          <p class="sec-label">表示サイズ</p>
+          <div class="row">
+            <span class="lbl">サイズ</span>
+            <input type="range" id="sl-size" min="100" max="700" value="300" step="10">
+            <input type="number" id="n-size" class="num-input" min="100" max="700" step="10" value="300">
+            <span class="unit">px</span>
+          </div>
+        </section>
+
+        <section class="sec">
+          <p class="sec-label">プリセット</p>
+          <div class="preset-row">
+            <span class="preset-name">スロット 1</span>
+            <span id="preset-badge-1" class="preset-badge">未保存</span>
+            <button id="btn-save-1" class="btn secondary sm">保存</button>
+            <button id="btn-load-1" class="btn secondary sm">読込</button>
+          </div>
+          <div class="preset-row">
+            <span class="preset-name">スロット 2</span>
+            <span id="preset-badge-2" class="preset-badge">未保存</span>
+            <button id="btn-save-2" class="btn secondary sm">保存</button>
+            <button id="btn-load-2" class="btn secondary sm">読込</button>
+          </div>
+        </section>
+
+        <section class="sec obs-hint">
+          <p class="sec-label">OBS 連携</p>
+          <p class="hint-text">
+            URLに <code>?obs=1</code> を付けると配信モードで起動します。<br>
+            透過出力する場合はOBSブラウザソースのカスタムCSSに<br>
+            <code>body { background: transparent !important; }</code><br>
+            を追加してください。
+          </p>
+        </section>
+
+        <section class="sec obs-hint">
+          <p class="sec-label">iPhone 画面収録</p>
+          <p class="hint-text">
+            Safariで開いた後「ホーム画面に追加」するとブラウザUIが消えます。
+            ホーム画面のアイコンから起動→配信モード→iOS画面収録の順で操作してください。
+          </p>
+        </section>
+
+      </aside>
+    </div>
+  </div>
+
+  <!-- 配信モード終了ボタン（配信モード時のみ表示） -->
+  <button id="btn-exit" class="exit-btn" style="display:none" title="通常モードに戻る">✕</button>
+
+  <script src="app.js"></script>
+</body>
+</html>

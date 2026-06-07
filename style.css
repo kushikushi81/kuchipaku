@@ -1,0 +1,387 @@
+/* ── Reset ─────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+/* ── Variables ─────────────────────────────────────────── */
+:root {
+  --bg:      #0f172a;
+  --surface: #1e293b;
+  --border:  #334155;
+  --accent:  #6366f1;
+  --accentH: #818cf8;
+  --text:    #e2e8f0;
+  --muted:   #94a3b8;
+  --danger:  #ef4444;
+  --green:   #22c55e;
+  --r:       8px;
+}
+
+/* ── Base ──────────────────────────────────────────────── */
+html, body { height: 100%; overflow: hidden; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 13px;
+  color: var(--text);
+  /* 透過デフォルト（OBSブラウザソース対応） */
+  background: transparent;
+}
+
+body.with-ui { background: var(--bg); }
+
+/* ── App shell ─────────────────────────────────────────── */
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* ── Header ────────────────────────────────────────────── */
+#hd {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 48px;
+  padding: 0 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.logo {
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--accent);
+  letter-spacing: .06em;
+}
+
+/* ── Stage (canvas + panel) ────────────────────────────── */
+#stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+/* ── Canvas area ───────────────────────────────────────── */
+#canvas-area {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 20px;
+}
+
+/* チェッカーボード（透過の視覚的インジケーター）は通常モードのみ */
+#checker-wrap {
+  display: inline-block;
+  line-height: 0;
+  border-radius: var(--r);
+  overflow: hidden;
+}
+
+body.with-ui #checker-wrap {
+  background-color: #888;
+  background-image:
+    linear-gradient(45deg,  #bbb 25%, transparent 25%),
+    linear-gradient(-45deg, #bbb 25%, transparent 25%),
+    linear-gradient(45deg,  transparent 75%, #bbb 75%),
+    linear-gradient(-45deg, transparent 75%, #bbb 75%);
+  background-size: 14px 14px;
+  background-position: 0 0, 0 7px, 7px -7px, -7px 0;
+}
+
+#cv {
+  display: block;
+  image-rendering: auto;
+}
+
+/* ── Volume meter ──────────────────────────────────────── */
+#vmeter {
+  width: min(100%, 280px);
+  height: 5px;
+  background: var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+#vfill {
+  height: 100%;
+  width: 0%;
+  background: var(--accent);
+  border-radius: 3px;
+  transition: width 40ms linear, background 80ms;
+}
+
+#vfill.talking { background: var(--green); }
+
+/* ── Panel ─────────────────────────────────────────────── */
+#panel {
+  width: 270px;
+  flex-shrink: 0;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  overflow-y: auto;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sec {
+  background: rgba(255,255,255,.025);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sec-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .1em;
+  color: var(--muted);
+}
+
+/* ── Buttons ───────────────────────────────────────────── */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 7px 14px;
+  border: none;
+  border-radius: var(--r);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  -webkit-tap-highlight-color: transparent;
+  transition: filter .15s, transform .1s;
+  user-select: none;
+}
+.btn:active { transform: scale(.96); }
+
+.btn.primary  { background: var(--accent);  color: #fff; }
+.btn.primary:hover  { filter: brightness(1.15); }
+
+.btn.secondary { background: var(--border); color: var(--text); }
+.btn.secondary:hover { filter: brightness(1.2); }
+
+.btn.danger   { background: var(--danger);  color: #fff; }
+.btn.danger:hover   { filter: brightness(1.1); }
+
+.w100 { width: 100%; }
+
+/* ── Slider rows ───────────────────────────────────────── */
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.lbl {
+  flex-shrink: 0;
+  width: 68px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.row input[type=range] {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+/* ── Number input ───────────────────────────────────────── */
+.num-input {
+  flex-shrink: 0;
+  width: 52px;
+  padding: 3px 5px;
+  background: var(--border);
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 12px;
+  text-align: right;
+  -moz-appearance: textfield;
+}
+.num-input::-webkit-inner-spin-button,
+.num-input::-webkit-outer-spin-button { opacity: 1; }
+.num-input:focus {
+  outline: 1.5px solid var(--accent);
+  border-color: var(--accent);
+}
+
+.unit {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.char-img-name {
+  font-size: 11px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 2px 0;
+}
+
+.hint-inline {
+  flex-shrink: 0;
+  font-size: 10px;
+  color: var(--muted);
+}
+
+/* ── Radio group ───────────────────────────────────────── */
+.radios {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.radios label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 13px;
+}
+
+.radios input[type=radio] { accent-color: var(--accent); }
+
+/* ── Extra rows (color / image) ────────────────────────── */
+.extra-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.extra-row input[type=color] {
+  width: 36px;
+  height: 26px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 0;
+  background: none;
+}
+
+.fname {
+  font-size: 11px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.hidden { display: none !important; }
+
+/* ── Preset rows ────────────────────────────────────────── */
+.preset-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.preset-name {
+  flex: 1;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.preset-badge {
+  flex-shrink: 0;
+  font-size: 10px;
+  padding: 2px 7px;
+  border-radius: 10px;
+  background: var(--border);
+  color: var(--muted);
+}
+
+.preset-badge.saved {
+  background: rgba(34,197,94,.18);
+  color: var(--green);
+}
+
+.btn.sm {
+  padding: 4px 10px;
+  font-size: 11px;
+}
+
+/* ── Hints ─────────────────────────────────────────────── */
+.obs-hint {
+  border-color: #1d4ed8;
+  background: rgba(99,102,241,.04);
+}
+
+.hint-text {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.75;
+}
+
+.hint-text code {
+  background: var(--border);
+  padding: 1px 5px;
+  border-radius: 3px;
+  color: var(--accentH);
+  font-size: 10.5px;
+  font-family: 'SF Mono', 'Consolas', monospace;
+}
+
+/* ── Exit button (配信モード終了) ──────────────────────── */
+.exit-btn {
+  position: fixed;
+  top: 10px;
+  right: 10px;
+  z-index: 999;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(255,255,255,.12);
+  color: #fff;
+  font-size: 13px;
+  cursor: pointer;
+  opacity: .3;
+  transition: opacity .2s;
+  -webkit-tap-highlight-color: transparent;
+}
+.exit-btn:hover  { opacity: 1; }
+.exit-btn:active { opacity: 1; transform: scale(.92); }
+
+/* ── Mobile / iPhone ────────────────────────────────────── */
+@media (max-width: 580px) {
+  body.with-ui {
+    overflow-y: auto;
+  }
+
+  #app { height: auto; min-height: 100%; }
+
+  #stage {
+    flex-direction: column;
+    height: auto;
+    overflow: visible;
+  }
+
+  #canvas-area {
+    padding: 16px;
+  }
+
+  #panel {
+    width: 100%;
+    border-left: none;
+    border-top: 1px solid var(--border);
+    overflow-y: visible;
+    height: auto;
+  }
+}
