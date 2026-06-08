@@ -16,7 +16,7 @@ const cfg = {
   bgMode:           'transparent',
   bgColor:          '#222244',
   bgImage:          null,
-  charSize:         720,
+  charSize:         1080,
   charX:            50,         // キャラクター横位置（canvas幅に対する%）
   charY:            50,         // キャラクター縦位置（canvas高さに対する%）
   charScale:        100,        // キャラクター描画サイズ（canvas幅に対する%）
@@ -589,7 +589,9 @@ function loadPreset(slot) {
   setSliderNum('sl-sens',   'n-sens',   p.sensRaw);            cfg.sensitivity     = p.sensRaw / 1000;
   setSliderNum('sl-hold',   'n-hold',   p.holdMs);             cfg.holdMs          = p.holdMs;
   setSliderNum('sl-speed',  'n-speed',  p.mouthMs);            cfg.mouthMs         = p.mouthMs;
-  setSliderNum('sl-size',   'n-size',   p.charSize);           cfg.charSize        = p.charSize;
+  cfg.charSize = [720, 1080].includes(p.charSize) ? p.charSize : 1080;
+  const resRadio = document.querySelector(`input[name=resolution][value="${cfg.charSize}"]`);
+  if (resRadio) resRadio.checked = true;
   setSliderNum('sl-chroma', 'n-chroma', p.chromaTolerance ?? 80); cfg.chromaTolerance = p.chromaTolerance ?? 80;
 
   if (p.aspectRatio) {
@@ -740,9 +742,11 @@ function setupUI() {
   linkSlider('sl-sens',   'n-sens',   v => { cfg.sensitivity = v / 1000; });
   linkSlider('sl-hold',   'n-hold',   v => { cfg.holdMs      = v; });
   linkSlider('sl-speed',  'n-speed',  v => { cfg.mouthMs     = v; });
-  linkSlider('sl-size',   'n-size',   v => {
-    cfg.charSize = v;
-    if (!isBroadcast) resizeCanvas(v);
+  document.querySelectorAll('input[name=resolution]').forEach(radio => {
+    radio.addEventListener('change', () => {
+      cfg.charSize = +radio.value;
+      if (!isBroadcast) resizeCanvas(cfg.charSize);
+    });
   });
 
   // アスペクト比
