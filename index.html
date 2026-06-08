@@ -144,6 +144,29 @@
         </section>
 
         <section class="sec">
+          <p class="sec-label">キャラクター配置</p>
+          <div class="row">
+            <span class="lbl">横位置</span>
+            <input type="range" id="sl-char-x" min="0" max="100" value="50">
+            <input type="number" id="n-char-x" class="num-input" min="0" max="100" value="50">
+            <span class="unit">%</span>
+          </div>
+          <div class="row">
+            <span class="lbl">縦位置</span>
+            <input type="range" id="sl-char-y" min="0" max="100" value="50">
+            <input type="number" id="n-char-y" class="num-input" min="0" max="100" value="50">
+            <span class="unit">%</span>
+          </div>
+          <div class="row">
+            <span class="lbl">サイズ</span>
+            <input type="range" id="sl-char-scale" min="10" max="200" value="100" step="5">
+            <input type="number" id="n-char-scale" class="num-input" min="10" max="200" step="5" value="100">
+            <span class="unit">%</span>
+          </div>
+          <button id="btn-char-pos-reset" class="btn secondary sm w100">配置リセット</button>
+        </section>
+
+        <section class="sec">
           <p class="sec-label">プリセット</p>
           <div class="preset-row">
             <span class="preset-name">スロット 1</span>
@@ -166,6 +189,13 @@
 
         <section class="sec">
           <p class="sec-label">アプリ内録画</p>
+          <div class="row">
+            <span class="lbl">比率</span>
+            <div class="radios-row">
+              <label><input type="radio" name="rec-aspect" value="1:1" checked>1:1</label>
+              <label><input type="radio" name="rec-aspect" value="9:16">縦型 9:16</label>
+            </div>
+          </div>
           <button id="btn-record" class="btn btn-rec-start w100">● 録画開始</button>
           <p class="hint-text">
             iOS画面収録の代わりにアプリが直接録画します。<br>

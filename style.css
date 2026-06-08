@@ -253,6 +253,24 @@ body.with-ui #checker-wrap {
   gap: 5px;
 }
 
+.radios-row {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.radios-row label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 13px;
+}
+
+.radios-row input[type=radio] { accent-color: var(--accent); }
+
 .radios label {
   display: flex;
   align-items: center;

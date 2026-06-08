@@ -17,6 +17,10 @@ const cfg = {
   bgColor:          '#222244',
   bgImage:          null,
   charSize:         300,
+  charX:            50,         // キャラクター横位置（canvas幅に対する%）
+  charY:            50,         // キャラクター縦位置（canvas高さに対する%）
+  charScale:        100,        // キャラクター描画サイズ（canvas幅に対する%）
+  aspectRatio:      '1:1',      // 録画アスペクト比: '1:1' | '9:16'
   chromaColor:      '#00ff00',  // 除去するキャラクター背景色
   chromaTolerance:  80,         // 色距離の許容範囲（0–200）
   cropOffsets: [
@@ -190,9 +194,18 @@ function initCanvas() {
   resizeCanvas(cfg.charSize);
 }
 
-function resizeCanvas(size) {
-  cv.width  = cv.height = size;
-  cv.style.width = cv.style.height = size + 'px';
+function calcCanvasSize(base) {
+  return cfg.aspectRatio === '9:16'
+    ? [base, Math.round(base * 16 / 9)]
+    : [base, base];
+}
+
+function resizeCanvas(base) {
+  const [w, h] = calcCanvasSize(base);
+  cv.width  = w;
+  cv.height = h;
+  cv.style.width  = w + 'px';
+  cv.style.height = h + 'px';
 }
 
 // ── マイク ────────────────────────────────────────────────────
@@ -442,7 +455,13 @@ function render() {
     case 'color':  cx.fillStyle = cfg.bgColor; cx.fillRect(0, 0, cv.width, cv.height); break;
     case 'image':  if (cfg.bgImage) cx.drawImage(cfg.bgImage, 0, 0, cv.width, cv.height); break;
   }
-  if (frames.length) cx.drawImage(frames[pickFrame()], 0, 0, cv.width, cv.height);
+  if (frames.length) {
+    const drawW = Math.round(cv.width * cfg.charScale / 100);
+    const drawH = drawW;
+    const drawX = Math.round(cv.width  * cfg.charX / 100 - drawW / 2);
+    const drawY = Math.round(cv.height * cfg.charY / 100 - drawH / 2);
+    cx.drawImage(frames[pickFrame()], drawX, drawY, drawW, drawH);
+  }
 }
 
 // ── メインループ ──────────────────────────────────────────────
@@ -459,6 +478,13 @@ function loop(ts) {
 // ── 配信モード ────────────────────────────────────────────────
 let isBroadcast = false;
 
+function broadcastBase() {
+  if (cfg.aspectRatio === '9:16') {
+    return Math.min(window.innerWidth, Math.floor(window.innerHeight * 9 / 16));
+  }
+  return Math.min(window.innerWidth, window.innerHeight);
+}
+
 function setBroadcast(on) {
   isBroadcast = on;
   document.body.classList.toggle('with-ui', !on);
@@ -468,7 +494,7 @@ function setBroadcast(on) {
   });
   document.getElementById('btn-exit').style.display = on ? '' : 'none';
   document.getElementById('rec-overlay').style.display = on ? 'flex' : 'none';
-  resizeCanvas(on ? Math.min(window.innerWidth, window.innerHeight) : cfg.charSize);
+  resizeCanvas(on ? broadcastBase() : cfg.charSize);
 }
 
 // ── UI ヘルパー ───────────────────────────────────────────────
@@ -520,6 +546,10 @@ function savePreset(slot) {
     holdMs:          cfg.holdMs,
     mouthMs:         cfg.mouthMs,
     charSize:        cfg.charSize,
+    charX:           cfg.charX,
+    charY:           cfg.charY,
+    charScale:       cfg.charScale,
+    aspectRatio:     cfg.aspectRatio,
     bgMode:          cfg.bgMode,
     bgColor:         cfg.bgColor,
     chromaColor:     cfg.chromaColor,
@@ -540,7 +570,16 @@ function loadPreset(slot) {
   setSliderNum('sl-size',   'n-size',   p.charSize);           cfg.charSize        = p.charSize;
   setSliderNum('sl-chroma', 'n-chroma', p.chromaTolerance ?? 80); cfg.chromaTolerance = p.chromaTolerance ?? 80;
 
+  if (p.aspectRatio) {
+    cfg.aspectRatio = p.aspectRatio;
+    const ar = document.querySelector(`input[name=rec-aspect][value="${p.aspectRatio}"]`);
+    if (ar) ar.checked = true;
+  }
   if (!isBroadcast) resizeCanvas(p.charSize);
+
+  setSliderNum('sl-char-x',     'n-char-x',     p.charX     ?? 50);  cfg.charX     = p.charX     ?? 50;
+  setSliderNum('sl-char-y',     'n-char-y',     p.charY     ?? 50);  cfg.charY     = p.charY     ?? 50;
+  setSliderNum('sl-char-scale', 'n-char-scale', p.charScale ?? 100); cfg.charScale = p.charScale ?? 100;
 
   cfg.bgMode  = p.bgMode;
   cfg.bgColor = p.bgColor;
@@ -677,6 +716,25 @@ function setupUI() {
     if (!isBroadcast) resizeCanvas(v);
   });
 
+  // アスペクト比
+  document.querySelectorAll('input[name=rec-aspect]').forEach(radio => {
+    radio.addEventListener('change', () => {
+      cfg.aspectRatio = radio.value;
+      resizeCanvas(isBroadcast ? broadcastBase() : cfg.charSize);
+    });
+  });
+
+  // キャラクター配置
+  linkSlider('sl-char-x',     'n-char-x',     v => { cfg.charX     = v; });
+  linkSlider('sl-char-y',     'n-char-y',     v => { cfg.charY     = v; });
+  linkSlider('sl-char-scale', 'n-char-scale', v => { cfg.charScale = v; });
+  document.getElementById('btn-char-pos-reset')?.addEventListener('click', () => {
+    cfg.charX = 50; cfg.charY = 50; cfg.charScale = 100;
+    setSliderNum('sl-char-x',     'n-char-x',     50);
+    setSliderNum('sl-char-y',     'n-char-y',     50);
+    setSliderNum('sl-char-scale', 'n-char-scale', 100);
+  });
+
   // 背景モード
   document.querySelectorAll('input[name=bg]').forEach(radio => {
     radio.addEventListener('change', () => {
@@ -762,7 +820,7 @@ function setupUI() {
   document.getElementById('btn-exit').addEventListener('click', () => setBroadcast(false));
 
   window.addEventListener('resize', () => {
-    if (isBroadcast) resizeCanvas(Math.min(window.innerWidth, window.innerHeight));
+    if (isBroadcast) resizeCanvas(broadcastBase());
   });
 
   // OBS URLパラメータ
