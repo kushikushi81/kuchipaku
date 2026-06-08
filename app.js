@@ -38,6 +38,7 @@ const audio = {
   stream:   null,
   active:   false,
 };
+let audioBuf = null;
 
 // ── 録画状態 ──────────────────────────────────────────────────
 const rec = {
@@ -62,6 +63,7 @@ const anim = {
 function randBlink() { return 3000 + Math.random() * 4000; }
 
 let refreshCropUI = () => {};
+let vfillEl = null;
 
 // ── スプライト ────────────────────────────────────────────────
 const SPRITE_INSET = 3;  // 各フレーム四辺から除外するピクセル数（境界線除去）
@@ -260,6 +262,7 @@ async function startMic() {
 
     audio.analyser = audio.ctx.createAnalyser();
     audio.analyser.fftSize = 256;
+    audioBuf = new Uint8Array(audio.analyser.fftSize);
     audio.ctx.createMediaStreamSource(audio.stream).connect(audio.analyser);
     audio.active = true;
     updateMicBtn(true);
@@ -274,6 +277,7 @@ function stopMic() {
   clearTimeout(micReconnectTimer);
   audio.stream?.getTracks().forEach(t => t.stop());
   audio.stream = audio.analyser = null;
+  audioBuf = null;
   audio.active = false;
   updateMicBtn(false);
 }
@@ -406,12 +410,11 @@ function stopRecordTimer() {
 }
 
 function getVolume() {
-  if (!audio.analyser) return 0;
-  const buf = new Uint8Array(audio.analyser.fftSize);
-  audio.analyser.getByteTimeDomainData(buf);
+  if (!audio.analyser || !audioBuf) return 0;
+  audio.analyser.getByteTimeDomainData(audioBuf);
   let sum = 0;
-  for (const v of buf) { const n = v / 128 - 1; sum += n * n; }
-  return Math.sqrt(sum / buf.length);
+  for (const v of audioBuf) { const n = v / 128 - 1; sum += n * n; }
+  return Math.sqrt(sum / audioBuf.length);
 }
 
 // ── アニメーション更新 ────────────────────────────────────────
@@ -448,10 +451,9 @@ function updateAnim(dt) {
     anim.blinkNext  = randBlink();
   }
 
-  const fill = document.getElementById('vfill');
-  if (fill) {
-    fill.style.width = Math.min(vol / 0.1 * 100, 100) + '%';
-    fill.classList.toggle('talking', anim.talking);
+  if (vfillEl) {
+    vfillEl.style.width = Math.min(vol / 0.1 * 100, 100) + '%';
+    vfillEl.classList.toggle('talking', anim.talking);
   }
 }
 
@@ -877,6 +879,7 @@ if ('serviceWorker' in navigator) {
 async function boot() {
   initCanvas();
   setupUI();
+  vfillEl = document.getElementById('vfill');
   setupResumeOnInteraction();
 
   const savedCropOffsets = await dbGet('cropOffsets');
