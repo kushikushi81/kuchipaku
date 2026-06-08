@@ -213,11 +213,6 @@ function resizeCanvas(base) {
 }
 
 function updateCanvasDisplay() {
-  if (isBroadcast) {
-    cv.style.width  = cv.width  + 'px';
-    cv.style.height = cv.height + 'px';
-    return;
-  }
   const area   = document.getElementById('canvas-area');
   const vmeter = document.getElementById('vmeter');
   const pad    = window.innerWidth <= 580 ? 32 : 40;
@@ -599,7 +594,7 @@ function loadPreset(slot) {
     const ar = document.querySelector(`input[name=rec-aspect][value="${p.aspectRatio}"]`);
     if (ar) ar.checked = true;
   }
-  if (!isBroadcast) resizeCanvas(p.charSize);
+  if (!isBroadcast) resizeCanvas(cfg.charSize);
 
   setSliderNum('sl-char-x',     'n-char-x',     p.charX     ?? 50);  cfg.charX     = p.charX     ?? 50;
   setSliderNum('sl-char-y',     'n-char-y',     p.charY     ?? 50);  cfg.charY     = p.charY     ?? 50;
@@ -784,8 +779,9 @@ function setupUI() {
     const file = e.target.files[0];
     if (!file) return;
     const img = new Image();
-    img.onload = () => { cfg.bgImage = img; };
-    img.src = URL.createObjectURL(file);
+    const bgUrl = URL.createObjectURL(file);
+    img.onload = () => { cfg.bgImage = img; URL.revokeObjectURL(bgUrl); };
+    img.src = bgUrl;
     document.getElementById('img-name').textContent = file.name;
   });
 
@@ -801,7 +797,9 @@ function setupUI() {
     btn.textContent = '読み込み中…';
     btn.disabled = true;
     try {
-      await loadSpriteFromUrl(URL.createObjectURL(file));
+      const charUrl = URL.createObjectURL(file);
+      await loadSpriteFromUrl(charUrl);
+      URL.revokeObjectURL(charUrl);
       document.getElementById('char-img-name').textContent = file.name;
       await dbSet('charImage', file);
       await dbSet('charImageName', file.name);
@@ -891,7 +889,9 @@ async function boot() {
     // IndexedDB に保存済みの画像があれば復元
     const savedFile = await dbGet('charImage');
     if (savedFile) {
-      await loadSpriteFromUrl(URL.createObjectURL(savedFile));
+      const savedUrl = URL.createObjectURL(savedFile);
+      await loadSpriteFromUrl(savedUrl);
+      URL.revokeObjectURL(savedUrl);
       const name = await dbGet('charImageName');
       if (name) document.getElementById('char-img-name').textContent = name;
     } else {
