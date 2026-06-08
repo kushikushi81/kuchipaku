@@ -700,6 +700,13 @@ function setupCropUI() {
 
 // ── UI 配線 ────────────────────────────────────────────────────
 function setupUI() {
+  // セクション折りたたみトグル
+  document.querySelectorAll('#panel .sec-label').forEach(label => {
+    label.addEventListener('click', () => {
+      label.closest('.sec').classList.toggle('collapsed');
+    });
+  });
+
   setupCropUI();
 
   // マイク

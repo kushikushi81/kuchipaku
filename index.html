@@ -32,6 +32,46 @@
       <aside id="panel">
 
         <section class="sec">
+          <p class="sec-label">アプリ内録画</p>
+          <div class="row">
+            <span class="lbl">比率</span>
+            <div class="radios-row">
+              <label><input type="radio" name="rec-aspect" value="1:1" checked>1:1</label>
+              <label><input type="radio" name="rec-aspect" value="9:16">縦型 9:16</label>
+            </div>
+          </div>
+          <button id="btn-record" class="btn btn-rec-start w100">● 録画開始</button>
+          <p class="hint-text">
+            iOS画面収録の代わりにアプリが直接録画します。<br>
+            停止後にネイティブ共有シートが開くので<br>
+            「ビデオを保存」でカメラロールへ保存できます。
+          </p>
+        </section>
+
+        <section class="sec collapsed">
+          <p class="sec-label">キャラクター配置</p>
+          <div class="row">
+            <span class="lbl">横位置</span>
+            <input type="range" id="sl-char-x" min="0" max="100" value="50">
+            <input type="number" id="n-char-x" class="num-input" min="0" max="100" value="50">
+            <span class="unit">%</span>
+          </div>
+          <div class="row">
+            <span class="lbl">縦位置</span>
+            <input type="range" id="sl-char-y" min="0" max="100" value="50">
+            <input type="number" id="n-char-y" class="num-input" min="0" max="100" value="50">
+            <span class="unit">%</span>
+          </div>
+          <div class="row">
+            <span class="lbl">サイズ</span>
+            <input type="range" id="sl-char-scale" min="10" max="200" value="100" step="5">
+            <input type="number" id="n-char-scale" class="num-input" min="10" max="200" step="5" value="100">
+            <span class="unit">%</span>
+          </div>
+          <button id="btn-char-pos-reset" class="btn secondary sm w100">配置リセット</button>
+        </section>
+
+        <section class="sec collapsed">
           <p class="sec-label">キャラクター画像</p>
           <button id="btn-char-img" class="btn secondary w100">画像を変更</button>
           <input type="file" id="file-char" accept="image/*" style="display:none">
@@ -48,7 +88,7 @@
           </div>
         </section>
 
-        <section class="sec">
+        <section class="sec collapsed">
           <p class="sec-label">切り取り位置調整</p>
           <div class="row">
             <span class="lbl">フレーム</span>
@@ -88,7 +128,7 @@
           <button id="btn-crop-reset" class="btn secondary sm w100">このフレームをリセット</button>
         </section>
 
-        <section class="sec">
+        <section class="sec collapsed">
           <p class="sec-label">マイク</p>
           <button id="btn-mic" class="btn secondary w100">マイク開始</button>
           <div class="row">
@@ -104,7 +144,7 @@
           </div>
         </section>
 
-        <section class="sec">
+        <section class="sec collapsed">
           <p class="sec-label">口パク</p>
           <div class="row">
             <span class="lbl">速度</span>
@@ -114,7 +154,7 @@
           </div>
         </section>
 
-        <section class="sec">
+        <section class="sec collapsed">
           <p class="sec-label">背景</p>
           <div class="radios">
             <label><input type="radio" name="bg" value="transparent" checked>透過</label>
@@ -133,7 +173,7 @@
           </div>
         </section>
 
-        <section class="sec">
+        <section class="sec collapsed">
           <p class="sec-label">表示サイズ</p>
           <div class="row">
             <span class="lbl">サイズ</span>
@@ -143,30 +183,7 @@
           </div>
         </section>
 
-        <section class="sec">
-          <p class="sec-label">キャラクター配置</p>
-          <div class="row">
-            <span class="lbl">横位置</span>
-            <input type="range" id="sl-char-x" min="0" max="100" value="50">
-            <input type="number" id="n-char-x" class="num-input" min="0" max="100" value="50">
-            <span class="unit">%</span>
-          </div>
-          <div class="row">
-            <span class="lbl">縦位置</span>
-            <input type="range" id="sl-char-y" min="0" max="100" value="50">
-            <input type="number" id="n-char-y" class="num-input" min="0" max="100" value="50">
-            <span class="unit">%</span>
-          </div>
-          <div class="row">
-            <span class="lbl">サイズ</span>
-            <input type="range" id="sl-char-scale" min="10" max="200" value="100" step="5">
-            <input type="number" id="n-char-scale" class="num-input" min="10" max="200" step="5" value="100">
-            <span class="unit">%</span>
-          </div>
-          <button id="btn-char-pos-reset" class="btn secondary sm w100">配置リセット</button>
-        </section>
-
-        <section class="sec">
+        <section class="sec collapsed">
           <p class="sec-label">プリセット</p>
           <div class="preset-row">
             <span class="preset-name">スロット 1</span>
@@ -187,24 +204,7 @@
           </div>
         </section>
 
-        <section class="sec">
-          <p class="sec-label">アプリ内録画</p>
-          <div class="row">
-            <span class="lbl">比率</span>
-            <div class="radios-row">
-              <label><input type="radio" name="rec-aspect" value="1:1" checked>1:1</label>
-              <label><input type="radio" name="rec-aspect" value="9:16">縦型 9:16</label>
-            </div>
-          </div>
-          <button id="btn-record" class="btn btn-rec-start w100">● 録画開始</button>
-          <p class="hint-text">
-            iOS画面収録の代わりにアプリが直接録画します。<br>
-            停止後にネイティブ共有シートが開くので<br>
-            「ビデオを保存」でカメラロールへ保存できます。
-          </p>
-        </section>
-
-        <section class="sec obs-hint">
+        <section class="sec obs-hint collapsed">
           <p class="sec-label">OBS 連携</p>
           <p class="hint-text">
             URLに <code>?obs=1</code> を付けると配信モードで起動します。<br>
@@ -214,7 +214,7 @@
           </p>
         </section>
 
-        <section class="sec obs-hint">
+        <section class="sec obs-hint collapsed">
           <p class="sec-label">iPhone 画面収録</p>
           <p class="hint-text">
             <strong>推奨手順：</strong><br>
