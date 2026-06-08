@@ -164,6 +164,16 @@
           </div>
         </section>
 
+        <section class="sec">
+          <p class="sec-label">アプリ内録画</p>
+          <button id="btn-record" class="btn btn-rec-start w100">● 録画開始</button>
+          <p class="hint-text">
+            iOS画面収録の代わりにアプリが直接録画します。<br>
+            停止後にネイティブ共有シートが開くので<br>
+            「ビデオを保存」でカメラロールへ保存できます。
+          </p>
+        </section>
+
         <section class="sec obs-hint">
           <p class="sec-label">OBS 連携</p>
           <p class="hint-text">
@@ -177,8 +187,17 @@
         <section class="sec obs-hint">
           <p class="sec-label">iPhone 画面収録</p>
           <p class="hint-text">
-            Safariで開いた後「ホーム画面に追加」するとブラウザUIが消えます。
-            ホーム画面のアイコンから起動→配信モード→iOS画面収録の順で操作してください。
+            <strong>推奨手順：</strong><br>
+            ① Safariで開き「ホーム画面に追加」→ アイコンから起動<br>
+            ② 背景を「クロマキー緑」または「カスタムカラー」に設定<br>
+            　（「透過」は録画映像に反映されません）<br>
+            ③ マイク開始 → 配信モード<br>
+            ④ iOS画面収録を開始<br>
+            <br>
+            <strong>マイクが止まったら：</strong><br>
+            画面収録のマイクONが既存マイクを割り込む場合があります。
+            ボタンがオレンジ色になったら画面をタップすると自動再開します。
+            再接続に失敗する場合は「マイク開始」を押し直してください。
           </p>
         </section>
 
@@ -188,6 +207,15 @@
 
   <!-- 配信モード終了ボタン（配信モード時のみ表示） -->
   <button id="btn-exit" class="exit-btn" style="display:none" title="通常モードに戻る">✕</button>
+
+  <!-- 録画オーバーレイ（配信モード時のみ表示） -->
+  <div id="rec-overlay" style="display:none">
+    <button id="btn-record-overlay" class="rec-overlay-btn" title="録画開始/停止">●</button>
+    <div id="rec-indicator" style="display:none">
+      <span class="rec-dot"></span>
+      <span id="rec-time">00:00</span>
+    </div>
+  </div>
 
   <script src="app.js"></script>
 </body>

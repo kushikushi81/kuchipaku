@@ -35,6 +35,15 @@ const audio = {
   active:   false,
 };
 
+// ── 録画状態 ──────────────────────────────────────────────────
+const rec = {
+  mediaRecorder: null,
+  chunks:        [],
+  active:        false,
+  startTime:     0,
+  timerInterval: null,
+};
+
 // ── アニメーション状態 ────────────────────────────────────────
 const anim = {
   talking:    false,
@@ -187,12 +196,38 @@ function resizeCanvas(size) {
 }
 
 // ── マイク ────────────────────────────────────────────────────
+let micReconnectTimer = null;
+
 async function startMic() {
   if (audio.active) return;
+  clearTimeout(micReconnectTimer);
   try {
-    if (!audio.ctx) audio.ctx = new (window.AudioContext || window.webkitAudioContext)();
+    if (!audio.ctx) {
+      audio.ctx = new (window.AudioContext || window.webkitAudioContext)();
+      // iOS が画面収録開始などで AudioSession を割り込むと suspended になる
+      audio.ctx.onstatechange = () => {
+        if (audio.ctx.state === 'suspended' && audio.active) {
+          updateMicBtn('warning');
+          audio.ctx.resume().catch(() => {});
+        } else if (audio.ctx.state === 'running' && audio.active) {
+          updateMicBtn(true);
+        }
+      };
+    }
     if (audio.ctx.state === 'suspended') await audio.ctx.resume();
-    audio.stream   = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    audio.stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+
+    // iOS 画面収録などでトラックが切断されたときの復旧
+    audio.stream.getAudioTracks().forEach(track => {
+      track.onended = () => {
+        if (!audio.active) return;
+        audio.stream = audio.analyser = null;
+        audio.active = false;
+        updateMicBtn('warning');
+        micReconnectTimer = setTimeout(() => startMic(), 1500);
+      };
+    });
+
     audio.analyser = audio.ctx.createAnalyser();
     audio.analyser.fftSize = 256;
     audio.ctx.createMediaStreamSource(audio.stream).connect(audio.analyser);
@@ -206,10 +241,138 @@ async function startMic() {
 
 function stopMic() {
   if (!audio.active) return;
+  clearTimeout(micReconnectTimer);
   audio.stream?.getTracks().forEach(t => t.stop());
   audio.stream = audio.analyser = null;
   audio.active = false;
   updateMicBtn(false);
+}
+
+// iOS は AudioContext 再開にユーザー操作（タップ）が必要なため
+// 画面収録開始後の割り込みから復帰できるようにタップで再開を試みる
+function setupResumeOnInteraction() {
+  const tryResume = () => {
+    if (audio.ctx && audio.ctx.state === 'suspended') {
+      audio.ctx.resume().catch(() => {});
+    }
+  };
+  document.addEventListener('touchend', tryResume, { passive: true });
+  document.addEventListener('click',    tryResume);
+}
+
+// ── アプリ内録画（canvas.captureStream + getUserMedia → MP4） ──────
+function getSupportedMimeType() {
+  return ['video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm']
+    .find(t => MediaRecorder.isTypeSupported(t)) || '';
+}
+
+async function startRecording() {
+  if (rec.active) return;
+
+  if (typeof MediaRecorder === 'undefined') {
+    alert('お使いのブラウザは録画に対応していません。\niOS 14.3以降のSafariをお使いください。');
+    return;
+  }
+
+  // マイクが未起動なら自動起動
+  if (!audio.active) {
+    await startMic();
+    if (!audio.active) {
+      alert('録画にはマイクが必要です。\nマイクを許可してから再度お試しください。');
+      return;
+    }
+  }
+
+  try {
+    const canvasStream    = cv.captureStream(30);
+    const combinedStream  = new MediaStream([
+      ...canvasStream.getVideoTracks(),
+      ...audio.stream.getAudioTracks(),
+    ]);
+    const mimeType = getSupportedMimeType();
+    rec.mediaRecorder = new MediaRecorder(
+      combinedStream,
+      mimeType ? { mimeType } : {}
+    );
+    rec.chunks = [];
+    rec.mediaRecorder.ondataavailable = e => { if (e.data.size > 0) rec.chunks.push(e.data); };
+    rec.mediaRecorder.onstop = saveRecording;
+    rec.mediaRecorder.start(100);
+    rec.active    = true;
+    rec.startTime = Date.now();
+    updateRecordBtn(true);
+    startRecordTimer();
+  } catch (err) {
+    alert('録画を開始できませんでした。\n' + err.message);
+    console.error(err);
+  }
+}
+
+function stopRecording() {
+  if (!rec.active || !rec.mediaRecorder) return;
+  rec.mediaRecorder.stop();
+  rec.active = false;
+  stopRecordTimer();
+  updateRecordBtn(false);
+}
+
+async function saveRecording() {
+  const mimeType = rec.mediaRecorder.mimeType || 'video/mp4';
+  const ext      = mimeType.startsWith('video/mp4') ? 'mp4' : 'webm';
+  const blob     = new Blob(rec.chunks, { type: mimeType });
+  const fileName = `kuchipaku-${new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-')}.${ext}`;
+
+  // iOS では Web Share API でネイティブ共有シートを開く（カメラロール保存可）
+  if (navigator.canShare) {
+    const file = new File([blob], fileName, { type: mimeType });
+    try {
+      if (navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file], title: 'KuchiPaku 録画' });
+        return;
+      }
+    } catch (e) {
+      if (e.name !== 'AbortError') console.warn('Share API failed:', e);
+    }
+  }
+
+  // フォールバック：通常ダウンロード
+  const url = URL.createObjectURL(blob);
+  const a   = document.createElement('a');
+  a.href     = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+
+function updateRecordBtn(on) {
+  const b   = document.getElementById('btn-record');
+  const bo  = document.getElementById('btn-record-overlay');
+  const ind = document.getElementById('rec-indicator');
+  if (b) {
+    b.textContent = on ? '■ 録画停止' : '● 録画開始';
+    b.className   = 'btn w100 ' + (on ? 'btn-rec-stop' : 'btn-rec-start');
+  }
+  if (bo) {
+    bo.textContent = on ? '■' : '●';
+    bo.classList.toggle('active', on);
+  }
+  if (ind) ind.style.display = on ? 'flex' : 'none';
+}
+
+function startRecordTimer() {
+  const el = document.getElementById('rec-time');
+  rec.timerInterval = setInterval(() => {
+    if (!el) return;
+    const s = Math.floor((Date.now() - rec.startTime) / 1000);
+    el.textContent = `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+  }, 500);
+}
+
+function stopRecordTimer() {
+  clearInterval(rec.timerInterval);
+  rec.timerInterval = null;
 }
 
 function getVolume() {
@@ -304,15 +467,24 @@ function setBroadcast(on) {
     if (el) el.style.display = on ? 'none' : '';
   });
   document.getElementById('btn-exit').style.display = on ? '' : 'none';
+  document.getElementById('rec-overlay').style.display = on ? 'flex' : 'none';
   resizeCanvas(on ? Math.min(window.innerWidth, window.innerHeight) : cfg.charSize);
 }
 
 // ── UI ヘルパー ───────────────────────────────────────────────
-function updateMicBtn(on) {
+function updateMicBtn(state) {
   const b = document.getElementById('btn-mic');
   if (!b) return;
-  b.textContent = on ? 'マイク停止' : 'マイク開始';
-  b.className   = 'btn w100 ' + (on ? 'danger' : 'secondary');
+  if (state === 'warning') {
+    b.textContent = 'マイク再接続中… タップで再開';
+    b.className   = 'btn w100 warning';
+  } else if (state) {
+    b.textContent = 'マイク停止';
+    b.className   = 'btn w100 danger';
+  } else {
+    b.textContent = 'マイク開始';
+    b.className   = 'btn w100 secondary';
+  }
 }
 
 function linkSlider(slId, numId, applyFn) {
@@ -577,6 +749,14 @@ function setupUI() {
     e.target.value = '';
   });
 
+  // 録画
+  document.getElementById('btn-record')?.addEventListener('click', () => {
+    rec.active ? stopRecording() : startRecording();
+  });
+  document.getElementById('btn-record-overlay')?.addEventListener('click', () => {
+    rec.active ? stopRecording() : startRecording();
+  });
+
   // 配信モード
   document.getElementById('btn-live').addEventListener('click', () => setBroadcast(true));
   document.getElementById('btn-exit').addEventListener('click', () => setBroadcast(false));
@@ -607,6 +787,7 @@ if ('serviceWorker' in navigator) {
 async function boot() {
   initCanvas();
   setupUI();
+  setupResumeOnInteraction();
 
   const savedCropOffsets = await dbGet('cropOffsets');
   if (savedCropOffsets) {
