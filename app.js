@@ -16,7 +16,7 @@ const cfg = {
   bgMode:           'transparent',
   bgColor:          '#222244',
   bgImage:          null,
-  charSize:         300,
+  charSize:         720,
   charX:            50,         // キャラクター横位置（canvas幅に対する%）
   charY:            50,         // キャラクター縦位置（canvas高さに対する%）
   charScale:        100,        // キャラクター描画サイズ（canvas幅に対する%）
@@ -204,8 +204,30 @@ function resizeCanvas(base) {
   const [w, h] = calcCanvasSize(base);
   cv.width  = w;
   cv.height = h;
-  cv.style.width  = w + 'px';
-  cv.style.height = h + 'px';
+  if (isBroadcast) {
+    cv.style.width  = w + 'px';
+    cv.style.height = h + 'px';
+  } else {
+    updateCanvasDisplay();
+  }
+}
+
+function updateCanvasDisplay() {
+  if (isBroadcast) {
+    cv.style.width  = cv.width  + 'px';
+    cv.style.height = cv.height + 'px';
+    return;
+  }
+  const area   = document.getElementById('canvas-area');
+  const vmeter = document.getElementById('vmeter');
+  const pad    = window.innerWidth <= 580 ? 32 : 40;
+  const vgap   = vmeter ? vmeter.offsetHeight + 12 : 0;
+  const maxW   = area.clientWidth  - pad;
+  const maxH   = area.clientHeight > 0 ? area.clientHeight - pad - vgap : Infinity;
+  if (maxW <= 0) return;
+  const scale  = Math.min(1, maxW / cv.width, maxH / cv.height);
+  cv.style.width  = Math.round(cv.width  * scale) + 'px';
+  cv.style.height = Math.round(cv.height * scale) + 'px';
 }
 
 // ── マイク ────────────────────────────────────────────────────
@@ -828,6 +850,7 @@ function setupUI() {
 
   window.addEventListener('resize', () => {
     if (isBroadcast) resizeCanvas(broadcastBase());
+    else updateCanvasDisplay();
   });
 
   // OBS URLパラメータ
