@@ -37,9 +37,14 @@ const cfg = {
 const audio = {
   ctx:      null,
   analyser: null,
+  gainNode: null,
   stream:   null,
   active:   false,
 };
+
+// 'high'(収録向け)はAGCが効かず入力レベルが低くなるため、
+// 口パク判定用の信号のみゲインで底上げする（録音される音声には影響しない）
+const MIC_DETECT_GAIN = 4;
 let audioBuf = null;
 
 // ── 録画状態 ──────────────────────────────────────────────────
@@ -734,7 +739,9 @@ async function startMic() {
     audio.analyser = audio.ctx.createAnalyser();
     audio.analyser.fftSize = 256;
     audioBuf = new Uint8Array(audio.analyser.fftSize);
-    audio.ctx.createMediaStreamSource(audio.stream).connect(audio.analyser);
+    audio.gainNode = audio.ctx.createGain();
+    audio.gainNode.gain.value = (cfg.micQuality === 'high') ? MIC_DETECT_GAIN : 1;
+    audio.ctx.createMediaStreamSource(audio.stream).connect(audio.gainNode).connect(audio.analyser);
     audio.active = true;
     updateMicBtn(true);
   } catch (err) {
@@ -747,7 +754,8 @@ function stopMic() {
   if (!audio.active) return;
   clearTimeout(micReconnectTimer);
   audio.stream?.getTracks().forEach(t => t.stop());
-  audio.stream = audio.analyser = null;
+  audio.gainNode?.disconnect();
+  audio.stream = audio.analyser = audio.gainNode = null;
   audioBuf = null;
   audio.active = false;
   updateMicBtn(false);
