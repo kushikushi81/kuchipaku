@@ -20,7 +20,7 @@ const cfg = {
   charSize:         1080,
   charX:            50,         // キャラクター横位置（canvas幅に対する%）
   charY:            50,         // キャラクター縦位置（canvas高さに対する%）
-  charScale:        100,        // キャラクター描画サイズ（canvas幅に対する%）
+  charScale:        100,        // キャラクター描画サイズ（canvas短辺に対する%）
   aspectRatio:      '1:1',      // 録画アスペクト比: '1:1' | '9:16' | '16:9'
   chromaColor:      '#00ff00',  // 除去するキャラクター背景色
   chromaTolerance:  80,         // 色距離の許容範囲（0–200）
@@ -1069,7 +1069,9 @@ function render() {
       break;
   }
   if (frames.length) {
-    const drawW = Math.round(cv.width * cfg.charScale / 100);
+    // アスペクト比を切り替えても見た目のサイズが変わらないよう、canvasの短辺を基準にする
+    const refSize = Math.min(cv.width, cv.height);
+    const drawW = Math.round(refSize * cfg.charScale / 100);
     const drawH = drawW;
     const drawX = Math.round(cv.width  * cfg.charX / 100 - drawW / 2);
     const drawY = Math.round(cv.height * cfg.charY / 100 - drawH / 2);

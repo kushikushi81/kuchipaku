@@ -20,7 +20,7 @@ const cfg = {
   charSize:         1080,
   charX:            50,         // キャラクター横位置（canvas幅に対する%）
   charY:            50,         // キャラクター縦位置（canvas高さに対する%）
-  charScale:        100,        // キャラクター描画サイズ（canvas幅に対する%）
+  charScale:        100,        // キャラクター描画サイズ（canvas短辺に対する%）
   aspectRatio:      '1:1',      // 録画アスペクト比: '1:1' | '9:16' | '16:9'
   chromaColor:      '#00ff00',  // 除去するキャラクター背景色
   chromaTolerance:  80,         // 色距離の許容範囲（0–200）
@@ -679,6 +679,8 @@ function resizeCanvas(base) {
   } else {
     updateCanvasDisplay();
   }
+  const resEl = document.getElementById('res-current');
+  if (resEl) resEl.textContent = `${cv.width} × ${cv.height} px`;
 }
 
 function updateCanvasDisplay() {
@@ -955,6 +957,8 @@ async function saveRecording() {
     return;
   }
 
+  reportRecordedResolution(blob);
+
   // iOS では Web Share API でネイティブ共有シートを開く（カメラロール保存可）
   if (navigator.canShare) {
     const file = new File([blob], fileName, { type: mimeType });
@@ -979,6 +983,21 @@ async function saveRecording() {
   document.body.removeChild(a);
   setTimeout(() => URL.revokeObjectURL(url), 10000);
   await removeOPFSFile(opfsFileName);
+}
+
+// 録画ファイルの実際の解像度を確認用に表示する
+function reportRecordedResolution(blob) {
+  const elPanel = document.getElementById('res-last-rec');
+  if (!elPanel) return;
+  const url = URL.createObjectURL(blob);
+  const v = document.createElement('video');
+  v.preload = 'metadata';
+  v.onloadedmetadata = () => {
+    elPanel.textContent = `前回の録画: ${v.videoWidth} × ${v.videoHeight} px`;
+    URL.revokeObjectURL(url);
+  };
+  v.onerror = () => URL.revokeObjectURL(url);
+  v.src = url;
 }
 
 function updateRecordBtn(on) {
@@ -1084,7 +1103,9 @@ function render() {
       break;
   }
   if (frames.length) {
-    const drawW = Math.round(cv.width * cfg.charScale / 100);
+    // アスペクト比を切り替えても見た目のサイズが変わらないよう、canvasの短辺を基準にする
+    const refSize = Math.min(cv.width, cv.height);
+    const drawW = Math.round(refSize * cfg.charScale / 100);
     const drawH = drawW;
     const drawX = Math.round(cv.width  * cfg.charX / 100 - drawW / 2);
     const drawY = Math.round(cv.height * cfg.charY / 100 - drawH / 2);
