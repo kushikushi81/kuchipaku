@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">KuchiPaku</string>
+    <string name="title_activity_main">KuchiPaku</string>
+    <string name="package_name">com.kushikushi81.kuchipaku</string>
+    <string name="custom_url_scheme">com.kushikushi81.kuchipaku</string>
+</resources>

@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="KuchiPaku">
+  <title>KuchiPaku</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="character.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <div id="app">
+    <header id="hd">
+      <span class="logo">KuchiPaku</span>
+    </header>
+
+    <div id="stage">
+      <!-- キャラクター表示エリア -->
+      <div id="canvas-area">
+        <div id="checker-wrap">
+          <canvas id="cv"></canvas>
+        </div>
+        <div id="vmeter"><div id="vfill"></div></div>
+      </div>
+
+      <!-- コントロールパネル -->
+      <aside id="panel">
+
+        <section class="sec">
+          <p class="sec-label">アプリ内録画</p>
+          <div class="row">
+            <span class="lbl">比率</span>
+            <div class="radios-row">
+              <label><input type="radio" name="rec-aspect" value="1:1" checked>1:1</label>
+              <label><input type="radio" name="rec-aspect" value="9:16">縦型 9:16</label>
+              <label><input type="radio" name="rec-aspect" value="16:9">横型 16:9</label>
+            </div>
+          </div>
+          <button id="btn-record" class="btn btn-rec-start w100">● 録画開始</button>
+          <div id="rec-indicator-panel" class="rec-indicator-panel" style="display:none">
+            <span class="rec-dot"></span>
+            <span id="rec-time-panel">00:00</span>
+          </div>
+          <p class="hint-text">
+            アプリ内で直接録画します。<br>
+            停止後に共有メニューが開くので<br>
+            「保存」で端末に保存できます。
+          </p>
+        </section>
+
+        <section class="sec collapsed">
+          <p class="sec-label">キャラクター配置</p>
+          <div class="row">
+            <span class="lbl">横位置</span>
+            <input type="range" id="sl-char-x" min="0" max="100" value="50">
+            <input type="number" id="n-char-x" class="num-input" min="0" max="100" value="50">
+            <span class="unit">%</span>
+          </div>
+          <div class="row">
+            <span class="lbl">縦位置</span>
+            <input type="range" id="sl-char-y" min="0" max="100" value="50">
+            <input type="number" id="n-char-y" class="num-input" min="0" max="100" value="50">
+            <span class="unit">%</span>
+          </div>
+          <div class="row">
+            <span class="lbl">サイズ</span>
+            <input type="range" id="sl-char-scale" min="10" max="200" value="100" step="5">
+            <input type="number" id="n-char-scale" class="num-input" min="10" max="200" step="5" value="100">
+            <span class="unit">%</span>
+          </div>
+          <button id="btn-char-pos-reset" class="btn secondary sm w100">配置リセット</button>
+        </section>
+
+        <section class="sec collapsed">
+          <p class="sec-label">キャラクター画像</p>
+
+          <div class="char-mode-tabs">
+            <button class="char-tab active" data-tab="sprite">スプライト</button>
+            <button class="char-tab" data-tab="frames">4枚バラ</button>
+            <button class="char-tab" data-tab="auto">1枚から作る</button>
+          </div>
+
+          <!-- スプライトシートモード -->
+          <div id="char-tab-sprite">
+            <button id="btn-char-img" class="btn secondary w100">画像を変更</button>
+            <input type="file" id="file-char" accept="image/*" style="display:none">
+            <p id="char-img-name" class="char-img-name">character.png</p>
+          </div>
+
+          <!-- 4枚バラモード -->
+          <div id="char-tab-frames" style="display:none">
+            <div class="frame-grid">
+              <div class="frame-slot">
+                <div class="frame-slot-thumb" id="frame-thumb-0" data-frame="0">口あき<br>目あき</div>
+                <div class="frame-slot-label">口あき/目あき</div>
+                <button class="frame-slot-edit-btn" data-frame="0" style="display:none">切り抜き編集</button>
+              </div>
+              <div class="frame-slot">
+                <div class="frame-slot-thumb" id="frame-thumb-1" data-frame="1">口あき<br>目とじ</div>
+                <div class="frame-slot-label">口あき/目とじ</div>
+                <button class="frame-slot-edit-btn" data-frame="1" style="display:none">切り抜き編集</button>
+              </div>
+              <div class="frame-slot">
+                <div class="frame-slot-thumb" id="frame-thumb-2" data-frame="2">口とじ<br>目あき</div>
+                <div class="frame-slot-label">口とじ/目あき</div>
+                <button class="frame-slot-edit-btn" data-frame="2" style="display:none">切り抜き編集</button>
+              </div>
+              <div class="frame-slot">
+                <div class="frame-slot-thumb" id="frame-thumb-3" data-frame="3">口とじ<br>目とじ</div>
+                <div class="frame-slot-label">口とじ/目とじ</div>
+                <button class="frame-slot-edit-btn" data-frame="3" style="display:none">切り抜き編集</button>
+              </div>
+            </div>
+            <input type="file" id="file-frame" accept="image/*" style="display:none">
+            <button id="btn-frames-apply" class="btn primary w100" disabled>4フレームを適用</button>
+          </div>
+
+          <!-- 1枚から作るモード -->
+          <div id="char-tab-auto" style="display:none">
+            <p class="hint-text">1枚の顔画像から4表情フレームを自動生成します。</p>
+            <button id="btn-auto-img" class="btn secondary w100">元画像を選択</button>
+            <input type="file" id="file-auto" accept="image/*" style="display:none">
+            <p id="auto-img-name" class="char-img-name">未選択</p>
+            <button id="btn-auto-crop-edit" class="btn secondary sm w100" style="display:none">切り抜き編集</button>
+            <div id="auto-landmark-area" style="display:none">
+              <div class="row">
+                <span class="lbl">口の縦位置</span>
+                <input type="range" id="sl-mouth-y" min="40" max="90" value="70" step="1">
+                <input type="number" id="n-mouth-y" class="num-input" min="40" max="90" value="70">
+                <span class="unit">%</span>
+              </div>
+              <div class="row">
+                <span class="lbl">目の縦位置</span>
+                <input type="range" id="sl-eye-y" min="20" max="60" value="38" step="1">
+                <input type="number" id="n-eye-y" class="num-input" min="20" max="60" value="38">
+                <span class="unit">%</span>
+              </div>
+              <div class="row">
+                <span class="lbl">口の大きさ</span>
+                <input type="range" id="sl-mouth-size" min="5" max="40" value="18" step="1">
+                <input type="number" id="n-mouth-size" class="num-input" min="5" max="40" value="18">
+                <span class="unit">%</span>
+              </div>
+            </div>
+            <button id="btn-auto-generate" class="btn primary w100" disabled>4フレームを自動生成</button>
+            <div id="auto-preview-grid" class="auto-preview-grid" style="display:none"></div>
+            <button id="btn-auto-apply" class="btn primary w100" style="display:none">このフレームを適用</button>
+          </div>
+
+          <!-- 共通: クロマキー設定 -->
+          <div class="row">
+            <span class="lbl">背景色</span>
+            <input type="color" id="chroma-color" value="#00ff00">
+            <span class="hint-inline">除去する色</span>
+          </div>
+          <div class="row">
+            <span class="lbl">許容範囲</span>
+            <input type="range" id="sl-chroma" min="10" max="200" value="80" step="5">
+            <input type="number" id="n-chroma" class="num-input" min="10" max="200" step="5" value="80">
+          </div>
+        </section>
+
+        <section class="sec collapsed">
+          <p class="sec-label">切り取り位置調整</p>
+          <div class="row">
+            <span class="lbl">フレーム</span>
+            <select id="crop-frame-sel" class="crop-frame-sel">
+              <option value="0">口あき / 目あき</option>
+              <option value="1">口あき / 目とじ</option>
+              <option value="2">口とじ / 目あき</option>
+              <option value="3">口とじ / 目とじ</option>
+            </select>
+          </div>
+          <div class="row">
+            <span class="lbl-xs">X</span>
+            <input type="range" id="sl-crop-x" min="-200" max="200" value="0" step="1">
+            <input type="number" id="n-crop-x" class="num-input-xs" min="-200" max="200" value="0">
+            <span class="unit">px</span>
+          </div>
+          <div class="adj-row">
+            <button class="adj-btn" id="crop-x-mm">◀◀</button>
+            <button class="adj-btn" id="crop-x-m">◀</button>
+            <span class="adj-spacer"></span>
+            <button class="adj-btn" id="crop-x-p">▶</button>
+            <button class="adj-btn" id="crop-x-pp">▶▶</button>
+          </div>
+          <div class="row">
+            <span class="lbl-xs">Y</span>
+            <input type="range" id="sl-crop-y" min="-200" max="200" value="0" step="1">
+            <input type="number" id="n-crop-y" class="num-input-xs" min="-200" max="200" value="0">
+            <span class="unit">px</span>
+          </div>
+          <div class="adj-row">
+            <button class="adj-btn" id="crop-y-mm">▲▲</button>
+            <button class="adj-btn" id="crop-y-m">▲</button>
+            <span class="adj-spacer"></span>
+            <button class="adj-btn" id="crop-y-p">▼</button>
+            <button class="adj-btn" id="crop-y-pp">▼▼</button>
+          </div>
+          <button id="btn-crop-reset" class="btn secondary sm w100">このフレームをリセット</button>
+        </section>
+
+        <section class="sec collapsed">
+          <p class="sec-label">マイク</p>
+          <button id="btn-mic" class="btn secondary w100">マイク開始</button>
+          <div class="row">
+            <span class="lbl">感度</span>
+            <input type="range" id="sl-sens" min="1" max="100" value="15">
+            <input type="number" id="n-sens" class="num-input" min="1" max="100" value="15">
+          </div>
+          <div class="row">
+            <span class="lbl">ホールド</span>
+            <input type="range" id="sl-hold" min="0" max="600" value="150" step="10">
+            <input type="number" id="n-hold" class="num-input" min="0" max="600" step="10" value="150">
+            <span class="unit">ms</span>
+          </div>
+        </section>
+
+        <section class="sec collapsed">
+          <p class="sec-label">口パク</p>
+          <div class="row">
+            <span class="lbl">速度</span>
+            <input type="range" id="sl-speed" min="40" max="400" value="120" step="10">
+            <input type="number" id="n-speed" class="num-input" min="40" max="400" step="10" value="120">
+            <span class="unit">ms</span>
+          </div>
+        </section>
+
+        <section class="sec collapsed">
+          <p class="sec-label">背景</p>
+          <div class="radios">
+            <label><input type="radio" name="bg" value="transparent" checked>透過</label>
+            <label><input type="radio" name="bg" value="chroma">クロマキー緑</label>
+            <label><input type="radio" name="bg" value="color">カスタムカラー</label>
+            <label><input type="radio" name="bg" value="image">背景画像</label>
+          </div>
+          <div id="row-color" class="extra-row hidden">
+            <span class="lbl">色</span>
+            <input type="color" id="bg-color" value="#222244">
+          </div>
+          <div id="row-image" class="extra-row hidden">
+            <button id="btn-img" class="btn secondary">画像選択</button>
+            <span id="img-name" class="fname">未選択</span>
+            <button id="btn-bg-crop-edit" class="btn secondary sm" style="display:none">切り抜き編集</button>
+            <input type="file" id="file-img" accept="image/*" style="display:none">
+          </div>
+        </section>
+
+        <section class="sec collapsed">
+          <p class="sec-label">解像度</p>
+          <div class="radios">
+            <label><input type="radio" name="resolution" value="1080" checked>フルHD（1080p）</label>
+            <label><input type="radio" name="resolution" value="720">HD（720p）</label>
+          </div>
+        </section>
+
+        <section class="sec collapsed">
+          <p class="sec-label">プリセット</p>
+          <div class="preset-row">
+            <span class="preset-name">スロット 1</span>
+            <span id="preset-badge-1" class="preset-badge">未保存</span>
+            <button id="btn-save-1" class="btn secondary sm">保存</button>
+            <button id="btn-load-1" class="btn secondary sm">読込</button>
+          </div>
+          <div class="preset-row">
+            <span class="preset-name">スロット 2</span>
+            <span id="preset-badge-2" class="preset-badge">未保存</span>
+            <button id="btn-save-2" class="btn secondary sm">保存</button>
+            <button id="btn-load-2" class="btn secondary sm">読込</button>
+          </div>
+          <div class="preset-row">
+            <button id="btn-preset-export" class="btn secondary sm">書き出し</button>
+            <button id="btn-preset-import" class="btn secondary sm">読み込み</button>
+            <input type="file" id="file-preset" accept=".json,application/json" style="display:none">
+          </div>
+        </section>
+
+      </aside>
+    </div>
+  </div>
+
+  <!-- 画像クロップモーダル -->
+  <div id="crop-modal" class="crop-modal" style="display:none">
+    <div class="crop-modal-inner">
+      <p class="crop-modal-title">切り抜き範囲を選択</p>
+      <div class="crop-stage" id="crop-stage">
+        <canvas id="crop-canvas"></canvas>
+        <div id="crop-box"></div>
+      </div>
+      <div class="row">
+        <span class="lbl">拡大率</span>
+        <input type="range" id="sl-crop-zoom" min="100" max="400" value="100" step="1">
+        <span class="unit"><span id="crop-zoom-val">100</span>%</span>
+      </div>
+      <div class="crop-modal-actions">
+        <button id="btn-crop-cancel" class="btn secondary">キャンセル</button>
+        <button id="btn-crop-confirm" class="btn primary">この範囲で確定</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
