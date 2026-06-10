@@ -283,10 +283,17 @@
         <section class="sec obs-hint collapsed">
           <p class="sec-label">OBS 連携</p>
           <p class="hint-text">
-            URLに <code>?obs=1</code> を付けると配信モードで起動します。<br>
+            URLに <code>?obs=1</code> を付けると配信モードで起動し、<br>
+            キャラクターのみが表示されてマイクも自動で開始されます。<br>
             透過出力する場合はOBSブラウザソースのカスタムCSSに<br>
             <code>body { background: transparent !important; }</code><br>
-            を追加してください。
+            を追加してください。<br>
+            <br>
+            <strong>マイクが反応しない場合：</strong><br>
+            OBSの詳細設定で環境変数<br>
+            <code>OBS_BROWSER_CEF_COMMAND_LINE_ARGS</code> に<br>
+            <code>--autoplay-policy=no-user-gesture-required --use-fake-ui-for-media-stream</code><br>
+            を設定し、OBSを再起動してください。
           </p>
         </section>
 

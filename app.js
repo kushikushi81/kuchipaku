@@ -731,7 +731,10 @@ async function startMic() {
     audio.active = true;
     updateMicBtn(true);
   } catch (err) {
-    alert('マイクへのアクセスが許可されませんでした。\nブラウザのマイク権限設定を確認してください。');
+    // OBSブラウザソース内ではalert()がフリーズの原因になるため表示しない
+    if (!isObsMode) {
+      alert('マイクへのアクセスが許可されませんでした。\nブラウザのマイク権限設定を確認してください。');
+    }
     console.error(err);
   }
 }
@@ -1107,6 +1110,7 @@ function loop(ts) {
 
 // ── 配信モード ────────────────────────────────────────────────
 let isBroadcast = false;
+const isObsMode = new URLSearchParams(location.search).get('obs') === '1';
 
 function broadcastBase() {
   if (cfg.aspectRatio === '9:16') {
@@ -1504,6 +1508,8 @@ function setupUI() {
     document.getElementById('row-color').classList.toggle('hidden', bg !== 'color');
     document.getElementById('row-image').classList.toggle('hidden', bg !== 'image');
     setTimeout(() => setBroadcast(true), 0);
+    // OBSブラウザソースには#btn-micが表示されないため自動でマイクを開始する
+    startMic();
   }
 }
 
