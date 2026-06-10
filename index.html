@@ -16,7 +16,6 @@
   <div id="app">
     <header id="hd">
       <span class="logo">KuchiPaku</span>
-      <button id="btn-live" class="btn primary">配信モード</button>
     </header>
 
     <div id="stage">
@@ -283,8 +282,8 @@
         <section class="sec obs-hint collapsed">
           <p class="sec-label">OBS 連携</p>
           <p class="hint-text">
-            URLに <code>?obs=1</code> を付けると配信モードで起動し、<br>
-            キャラクターのみが表示されてマイクも自動で開始されます。<br>
+            URLに <code>?obs=1</code> を付けると、UIが非表示になり<br>
+            キャラクターのみが画面いっぱいに表示されてマイクも自動で開始されます。<br>
             透過出力する場合はOBSブラウザソースのカスタムCSSに<br>
             <code>body { background: transparent !important; }</code><br>
             を追加してください。<br>
@@ -301,11 +300,14 @@
           <p class="sec-label">iPhone 画面収録</p>
           <p class="hint-text">
             <strong>推奨手順：</strong><br>
-            ① Safariで開き「ホーム画面に追加」→ アイコンから起動<br>
-            ② 背景を「クロマキー緑」または「カスタムカラー」に設定<br>
-            　（「透過」は録画映像に反映されません）<br>
-            ③ マイク開始 → 配信モード<br>
-            ④ iOS画面収録を開始<br>
+            ① SafariでURLの末尾に <code>?obs=1&amp;bg=chroma</code> を付けて開く<br>
+            　（「透過」は録画映像に反映されないため<br>
+            　<code>bg=chroma</code>＝クロマキー緑 や<br>
+            　<code>bg=color</code>＝カスタムカラー を指定）<br>
+            ② 「ホーム画面に追加」→ アイコンから起動<br>
+            　起動時に自動でキャラクターのみの全画面表示になり、<br>
+            　マイクも自動で開始されます<br>
+            ③ iOS画面収録を開始<br>
             <br>
             <strong>マイクが止まったら：</strong><br>
             画面収録のマイクONが既存マイクを割り込む場合があります。
@@ -315,18 +317,6 @@
         </section>
 
       </aside>
-    </div>
-  </div>
-
-  <!-- 配信モード終了ボタン（配信モード時のみ表示） -->
-  <button id="btn-exit" class="exit-btn" style="display:none" title="通常モードに戻る">✕</button>
-
-  <!-- 録画オーバーレイ（配信モード時のみ表示） -->
-  <div id="rec-overlay" style="display:none">
-    <button id="btn-record-overlay" class="rec-overlay-btn" title="録画開始/停止">●</button>
-    <div id="rec-indicator" style="display:none">
-      <span class="rec-dot"></span>
-      <span id="rec-time">00:00</span>
     </div>
   </div>
 

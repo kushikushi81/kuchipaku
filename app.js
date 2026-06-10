@@ -40,6 +40,8 @@ const audio = {
   active:   false,
 };
 let audioBuf = null;
+let micDebugMsg = '未開始';
+let lastVol = 0;
 
 // ── 録画状態 ──────────────────────────────────────────────────
 const rec = {
@@ -71,6 +73,7 @@ function randBlink() { return 3000 + Math.random() * 4000; }
 
 let refreshCropUI = () => {};
 let vfillEl = null;
+let cropPreviewFrame = null; // 切り取り位置調整中に固定表示するフレーム番号（nullで通常アニメーション）
 
 // ── スプライト ────────────────────────────────────────────────
 const SPRITE_INSET = 3;  // 各フレーム四辺から除外するピクセル数（境界線除去）
@@ -697,6 +700,7 @@ let micReconnectTimer = null;
 async function startMic() {
   if (audio.active) return;
   clearTimeout(micReconnectTimer);
+  micDebugMsg = '開始中…';
   try {
     if (!audio.ctx) {
       audio.ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -730,7 +734,9 @@ async function startMic() {
     audio.ctx.createMediaStreamSource(audio.stream).connect(audio.analyser);
     audio.active = true;
     updateMicBtn(true);
+    micDebugMsg = `OK (ctx:${audio.ctx.state})`;
   } catch (err) {
+    micDebugMsg = `エラー: ${err.name}: ${err.message}`;
     // OBSブラウザソース内ではalert()がフリーズの原因になるため表示しない
     if (!isObsMode) {
       alert('マイクへのアクセスが許可されませんでした。\nブラウザのマイク権限設定を確認してください。');
@@ -977,36 +983,24 @@ async function saveRecording() {
 
 function updateRecordBtn(on) {
   const b      = document.getElementById('btn-record');
-  const bo     = document.getElementById('btn-record-overlay');
-  const ind    = document.getElementById('rec-indicator');
   const indPnl = document.getElementById('rec-indicator-panel');
   if (b) {
     b.textContent = on ? '■ 録画停止' : '● 録画開始';
     b.className   = 'btn w100 ' + (on ? 'btn-rec-stop' : 'btn-rec-start');
   }
-  if (bo) {
-    bo.textContent = on ? '■' : '●';
-    bo.classList.toggle('active', on);
-  }
-  if (ind) ind.style.display = on ? 'flex' : 'none';
   if (indPnl) indPnl.style.display = on ? 'flex' : 'none';
   if (!on) {
-    const t = '00:00';
-    const elOverlay = document.getElementById('rec-time');
-    const elPanel   = document.getElementById('rec-time-panel');
-    if (elOverlay) elOverlay.textContent = t;
-    if (elPanel)   elPanel.textContent   = t;
+    const elPanel = document.getElementById('rec-time-panel');
+    if (elPanel) elPanel.textContent = '00:00';
   }
 }
 
 function startRecordTimer() {
-  const elOverlay = document.getElementById('rec-time');
-  const elPanel   = document.getElementById('rec-time-panel');
+  const elPanel = document.getElementById('rec-time-panel');
   rec.timerInterval = setInterval(() => {
     const s = Math.floor((Date.now() - rec.startTime) / 1000);
     const t = `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
-    if (elOverlay) elOverlay.textContent = t;
-    if (elPanel)   elPanel.textContent   = t;
+    if (elPanel) elPanel.textContent = t;
   }, 500);
 }
 
@@ -1026,6 +1020,7 @@ function getVolume() {
 // ── アニメーション更新 ────────────────────────────────────────
 function updateAnim(dt) {
   const vol = getVolume();
+  lastVol = vol;
 
   if (vol > cfg.sensitivity) {
     anim.talking   = true;
@@ -1093,8 +1088,36 @@ function render() {
     const drawH = drawW;
     const drawX = Math.round(cv.width  * cfg.charX / 100 - drawW / 2);
     const drawY = Math.round(cv.height * cfg.charY / 100 - drawH / 2);
-    cx.drawImage(frames[pickFrame()], drawX, drawY, drawW, drawH);
+    if (cropPreviewFrame !== null) {
+      // 切り取り位置調整中：選択フレームを固定表示し、基準フレームを薄く重ねてガイド表示
+      if (cropPreviewFrame !== F.IDLE) {
+        cx.globalAlpha = 0.35;
+        cx.drawImage(frames[F.IDLE], drawX, drawY, drawW, drawH);
+        cx.globalAlpha = 1;
+      }
+      cx.drawImage(frames[cropPreviewFrame], drawX, drawY, drawW, drawH);
+    } else {
+      cx.drawImage(frames[pickFrame()], drawX, drawY, drawW, drawH);
+    }
   }
+  if (isDebugMode) drawDebugOverlay();
+}
+
+// OBS等のdevtoolsが使えない環境でマイク状態を直接確認するためのデバッグ表示
+function drawDebugOverlay() {
+  const lines = [
+    `mic.active: ${audio.active}`,
+    `ctx.state: ${audio.ctx ? audio.ctx.state : 'null'}`,
+    `vol: ${lastVol.toFixed(3)} (sensitivity: ${cfg.sensitivity})`,
+    `status: ${micDebugMsg}`,
+  ];
+  cx.font = '14px monospace';
+  const lineH = 18;
+  const w = 360;
+  cx.fillStyle = 'rgba(0,0,0,0.65)';
+  cx.fillRect(4, 4, w, lines.length * lineH + 8);
+  cx.fillStyle = '#0f0';
+  lines.forEach((line, i) => cx.fillText(line, 10, 4 + lineH * (i + 1)));
 }
 
 // ── メインループ ──────────────────────────────────────────────
@@ -1110,7 +1133,8 @@ function loop(ts) {
 
 // ── 配信モード ────────────────────────────────────────────────
 let isBroadcast = false;
-const isObsMode = new URLSearchParams(location.search).get('obs') === '1';
+const isObsMode   = new URLSearchParams(location.search).get('obs')   === '1';
+const isDebugMode = new URLSearchParams(location.search).get('debug') === '1';
 
 function broadcastBase() {
   if (cfg.aspectRatio === '9:16') {
@@ -1129,8 +1153,6 @@ function setBroadcast(on) {
     const el = document.getElementById(id);
     if (el) el.style.display = on ? 'none' : '';
   });
-  document.getElementById('btn-exit').style.display = on ? '' : 'none';
-  document.getElementById('rec-overlay').style.display = on ? 'flex' : 'none';
   resizeCanvas(on ? broadcastBase() : cfg.charSize);
 }
 
@@ -1174,6 +1196,40 @@ function linkSlider(slId, numId, applyFn) {
 function setSliderNum(slId, numId, val) {
   document.getElementById(slId).value = val;
   document.getElementById(numId).value = val;
+}
+
+// ── キャラクター位置のマウス操作（ドラッグ移動・ホイール拡縮） ───
+function setupCanvasMouse() {
+  let dragging = false;
+  let lastX = 0, lastY = 0;
+
+  cv.addEventListener('mousedown', e => {
+    dragging = true;
+    lastX = e.clientX;
+    lastY = e.clientY;
+  });
+
+  window.addEventListener('mousemove', e => {
+    if (!dragging) return;
+    const rect = cv.getBoundingClientRect();
+    const dx = (e.clientX - lastX) / rect.width  * 100;
+    const dy = (e.clientY - lastY) / rect.height * 100;
+    cfg.charX = Math.min(100, Math.max(0, cfg.charX + dx));
+    cfg.charY = Math.min(100, Math.max(0, cfg.charY + dy));
+    lastX = e.clientX;
+    lastY = e.clientY;
+    setSliderNum('sl-char-x', 'n-char-x', Math.round(cfg.charX));
+    setSliderNum('sl-char-y', 'n-char-y', Math.round(cfg.charY));
+  });
+
+  window.addEventListener('mouseup', () => { dragging = false; });
+
+  cv.addEventListener('wheel', e => {
+    e.preventDefault();
+    const scale = Math.min(200, Math.max(10, cfg.charScale - Math.sign(e.deltaY) * 5));
+    cfg.charScale = scale;
+    setSliderNum('sl-char-scale', 'n-char-scale', scale);
+  }, { passive: false });
 }
 
 // ── プリセット ────────────────────────────────────────────────
@@ -1285,17 +1341,24 @@ function importPresets(file) {
 // ── 切り取り位置調整 UI ────────────────────────────────────────
 function setupCropUI() {
   let activeFr = 0;
-  const sel = document.getElementById('crop-frame-sel');
-  const slX = document.getElementById('sl-crop-x');
-  const nX  = document.getElementById('n-crop-x');
-  const slY = document.getElementById('sl-crop-y');
-  const nY  = document.getElementById('n-crop-y');
+  const sel     = document.getElementById('crop-frame-sel');
+  const slX     = document.getElementById('sl-crop-x');
+  const nX      = document.getElementById('n-crop-x');
+  const slY     = document.getElementById('sl-crop-y');
+  const nY      = document.getElementById('n-crop-y');
+  const section = sel.closest('.sec');
 
   function syncUI() {
     const o = cfg.cropOffsets[activeFr];
     slX.value = nX.value = o.x;
     slY.value = nY.value = o.y;
+    if (cropPreviewFrame !== null) cropPreviewFrame = activeFr;
   }
+
+  // セクション開閉に合わせて、選択フレームの固定プレビュー表示を切り替える
+  section.querySelector('.sec-label').addEventListener('click', () => {
+    cropPreviewFrame = section.classList.contains('collapsed') ? null : activeFr;
+  });
 
   function applyX(v) {
     v = Math.max(-200, Math.min(200, Math.round(v)));
@@ -1387,6 +1450,7 @@ function setupUI() {
     setSliderNum('sl-char-y',     'n-char-y',     50);
     setSliderNum('sl-char-scale', 'n-char-scale', 100);
   });
+  setupCanvasMouse();
 
   // 背景モード
   document.querySelectorAll('input[name=bg]').forEach(radio => {
@@ -1485,13 +1549,6 @@ function setupUI() {
   document.getElementById('btn-record')?.addEventListener('click', () => {
     rec.active ? stopRecording() : startRecording();
   });
-  document.getElementById('btn-record-overlay')?.addEventListener('click', () => {
-    rec.active ? stopRecording() : startRecording();
-  });
-
-  // 配信モード
-  document.getElementById('btn-live').addEventListener('click', () => setBroadcast(true));
-  document.getElementById('btn-exit').addEventListener('click', () => setBroadcast(false));
 
   window.addEventListener('resize', () => {
     if (isBroadcast) resizeCanvas(broadcastBase());
