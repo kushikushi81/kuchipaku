@@ -662,7 +662,7 @@ function initCanvas() {
 
 function calcCanvasSize(base) {
   if (cfg.aspectRatio === '9:16') return [base, Math.round(base * 16 / 9)];
-  if (cfg.aspectRatio === '16:9') return [base, Math.round(base * 9 / 16)];
+  if (cfg.aspectRatio === '16:9') return [Math.round(base * 16 / 9), base];
   return [base, base];
 }
 
@@ -1113,7 +1113,7 @@ function broadcastBase() {
     return Math.min(window.innerWidth, Math.floor(window.innerHeight * 9 / 16));
   }
   if (cfg.aspectRatio === '16:9') {
-    return Math.min(window.innerWidth, Math.floor(window.innerHeight * 16 / 9));
+    return Math.min(window.innerHeight, Math.floor(window.innerWidth * 9 / 16));
   }
   return Math.min(window.innerWidth, window.innerHeight);
 }
