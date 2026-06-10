@@ -47,7 +47,7 @@ const audio = {
 // 口パク判定用の信号のみDynamicsCompressor+メイクアップゲインで底上げ・平準化する
 // （録音される音声には影響しない）
 const MIC_DETECT_COMPRESSOR = { threshold: -60, knee: 0, ratio: 12, attack: 0.003, release: 0.25 };
-const MIC_DETECT_MAKEUP_GAIN = 8;
+const MIC_DETECT_MAKEUP_GAIN = 4;
 let audioBuf = null;
 
 // ── 録画状態 ──────────────────────────────────────────────────
