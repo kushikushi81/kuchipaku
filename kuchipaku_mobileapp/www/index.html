@@ -207,6 +207,10 @@
         <section class="sec collapsed">
           <p class="sec-label">マイク</p>
           <button id="btn-mic" class="btn secondary w100">マイク開始</button>
+          <div class="radios">
+            <label><input type="radio" name="mic-quality" value="voice" checked>配信向け（ノイズ抑制あり）</label>
+            <label><input type="radio" name="mic-quality" value="high">収録向け（高音質・無加工）</label>
+          </div>
           <div class="row">
             <span class="lbl">感度</span>
             <input type="range" id="sl-sens" min="1" max="100" value="15">

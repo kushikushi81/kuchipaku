@@ -24,6 +24,7 @@ const cfg = {
   aspectRatio:      '1:1',      // 録画アスペクト比: '1:1' | '9:16' | '16:9'
   chromaColor:      '#00ff00',  // 除去するキャラクター背景色
   chromaTolerance:  80,         // 色距離の許容範囲（0–200）
+  micQuality:       'voice',    // マイク音質: 'voice'(配信向け/ノイズ抑制あり) | 'high'(収録向け/無加工)
   cropOffsets: [
     { x: 0, y: 0 },
     { x: 0, y: 0 },
@@ -689,6 +690,16 @@ function updateCanvasDisplay() {
 // ── マイク ────────────────────────────────────────────────────
 let micReconnectTimer = null;
 
+// 'high'(収録向け) はエコーキャンセル等の音声処理を無効にして無加工に近い音質を取得する
+function micConstraints() {
+  const processed = cfg.micQuality !== 'high';
+  return {
+    echoCancellation: processed,
+    noiseSuppression: processed,
+    autoGainControl:  processed,
+  };
+}
+
 async function startMic() {
   if (audio.active) return;
   clearTimeout(micReconnectTimer);
@@ -706,7 +717,7 @@ async function startMic() {
       };
     }
     if (audio.ctx.state === 'suspended') await audio.ctx.resume();
-    audio.stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    audio.stream = await navigator.mediaDevices.getUserMedia({ audio: micConstraints(), video: false });
 
     // iOS 画面収録などでトラックが切断されたときの復旧
     audio.stream.getAudioTracks().forEach(track => {
@@ -1201,6 +1212,7 @@ function savePreset(slot) {
     bgColor:         cfg.bgColor,
     chromaColor:     cfg.chromaColor,
     chromaTolerance: cfg.chromaTolerance,
+    micQuality:      cfg.micQuality,
     cropOffsets:     cfg.cropOffsets.map(o => ({ ...o })),
   }));
   updatePresetBadge(slot);
@@ -1246,6 +1258,13 @@ function loadPreset(slot) {
   if (p.cropOffsets) {
     cfg.cropOffsets = p.cropOffsets.map(o => ({ ...o }));
     refreshCropUI();
+  }
+
+  if (p.micQuality) {
+    cfg.micQuality = p.micQuality;
+    const mq = document.querySelector(`input[name=mic-quality][value="${p.micQuality}"]`);
+    if (mq) mq.checked = true;
+    if (audio.active) { stopMic(); startMic(); }
   }
 
   buildFrames();
@@ -1362,6 +1381,16 @@ function setupUI() {
   // マイク
   document.getElementById('btn-mic').addEventListener('click', () => {
     audio.active ? stopMic() : startMic();
+  });
+
+  document.querySelectorAll('input[name=mic-quality]').forEach(radio => {
+    radio.addEventListener('change', () => {
+      cfg.micQuality = radio.value;
+      if (audio.active) {
+        stopMic();
+        startMic();
+      }
+    });
   });
 
   // スライダー系
