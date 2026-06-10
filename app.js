@@ -700,13 +700,14 @@ function updateCanvasDisplay() {
 // ── マイク ────────────────────────────────────────────────────
 let micReconnectTimer = null;
 
-// 'high'(収録向け) はエコーキャンセル等の音声処理を無効にして無加工に近い音質を取得する
+// 'high'(収録向け) はエコーキャンセル/ノイズ抑制を無効にして無加工に近い音質を取得する。
+// autoGainControlは常時ONにする（OFFにすると入力レベルが下がりすぎ、口パクの感度判定が機能しなくなるため）
 function micConstraints() {
   const processed = cfg.micQuality !== 'high';
   return {
     echoCancellation: processed,
     noiseSuppression: processed,
-    autoGainControl:  processed,
+    autoGainControl:  true,
   };
 }
 
