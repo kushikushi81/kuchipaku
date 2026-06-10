@@ -35,16 +35,19 @@ const cfg = {
 
 // ── 音声状態 ──────────────────────────────────────────────────
 const audio = {
-  ctx:      null,
-  analyser: null,
-  gainNode: null,
-  stream:   null,
-  active:   false,
+  ctx:        null,
+  analyser:   null,
+  compressor: null,
+  gainNode:   null,
+  stream:     null,
+  active:     false,
 };
 
-// 'high'(収録向け)はAGCが効かず入力レベルが低くなるため、
-// 口パク判定用の信号のみゲインで底上げする（録音される音声には影響しない）
-const MIC_DETECT_GAIN = 4;
+// 'high'(収録向け)はAGCが効きにくく入力レベルが環境によって大きくばらつくため、
+// 口パク判定用の信号のみDynamicsCompressor+メイクアップゲインで底上げ・平準化する
+// （録音される音声には影響しない）
+const MIC_DETECT_COMPRESSOR = { threshold: -60, knee: 0, ratio: 12, attack: 0.003, release: 0.25 };
+const MIC_DETECT_MAKEUP_GAIN = 8;
 let audioBuf = null;
 
 // ── 録画状態 ──────────────────────────────────────────────────
@@ -739,9 +742,20 @@ async function startMic() {
     audio.analyser = audio.ctx.createAnalyser();
     audio.analyser.fftSize = 256;
     audioBuf = new Uint8Array(audio.analyser.fftSize);
-    audio.gainNode = audio.ctx.createGain();
-    audio.gainNode.gain.value = (cfg.micQuality === 'high') ? MIC_DETECT_GAIN : 1;
-    audio.ctx.createMediaStreamSource(audio.stream).connect(audio.gainNode).connect(audio.analyser);
+    const source = audio.ctx.createMediaStreamSource(audio.stream);
+    if (cfg.micQuality === 'high') {
+      audio.compressor = audio.ctx.createDynamicsCompressor();
+      audio.compressor.threshold.value = MIC_DETECT_COMPRESSOR.threshold;
+      audio.compressor.knee.value      = MIC_DETECT_COMPRESSOR.knee;
+      audio.compressor.ratio.value     = MIC_DETECT_COMPRESSOR.ratio;
+      audio.compressor.attack.value    = MIC_DETECT_COMPRESSOR.attack;
+      audio.compressor.release.value   = MIC_DETECT_COMPRESSOR.release;
+      audio.gainNode = audio.ctx.createGain();
+      audio.gainNode.gain.value = MIC_DETECT_MAKEUP_GAIN;
+      source.connect(audio.compressor).connect(audio.gainNode).connect(audio.analyser);
+    } else {
+      source.connect(audio.analyser);
+    }
     audio.active = true;
     updateMicBtn(true);
   } catch (err) {
@@ -755,7 +769,8 @@ function stopMic() {
   clearTimeout(micReconnectTimer);
   audio.stream?.getTracks().forEach(t => t.stop());
   audio.gainNode?.disconnect();
-  audio.stream = audio.analyser = audio.gainNode = null;
+  audio.compressor?.disconnect();
+  audio.stream = audio.analyser = audio.compressor = audio.gainNode = null;
   audioBuf = null;
   audio.active = false;
   updateMicBtn(false);
