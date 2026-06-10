@@ -16,11 +16,12 @@ const cfg = {
   bgMode:           'transparent',
   bgColor:          '#222244',
   bgImage:          null,
+  bgImageCrop:      null,    // 背景画像の切り抜き範囲 {sx,sy,sw,sh}（元画像に対する比率）
   charSize:         1080,
   charX:            50,         // キャラクター横位置（canvas幅に対する%）
   charY:            50,         // キャラクター縦位置（canvas高さに対する%）
   charScale:        100,        // キャラクター描画サイズ（canvas幅に対する%）
-  aspectRatio:      '1:1',      // 録画アスペクト比: '1:1' | '9:16'
+  aspectRatio:      '1:1',      // 録画アスペクト比: '1:1' | '9:16' | '16:9'
   chromaColor:      '#00ff00',  // 除去するキャラクター背景色
   chromaTolerance:  80,         // 色距離の許容範囲（0–200）
   cropOffsets: [
@@ -47,6 +48,12 @@ const rec = {
   active:        false,
   startTime:     0,
   timerInterval: null,
+  mimeType:      '',
+  // OPFS（長時間録画）関連
+  worker:        null,
+  useOPFS:       false,
+  opfsFileName:  null,
+  opfsChain:     null,
 };
 
 // ── アニメーション状態 ────────────────────────────────────────
@@ -156,6 +163,463 @@ function scheduleSaveCropOffsets() {
   saveCropTimer = setTimeout(() => dbSet('cropOffsets', cfg.cropOffsets), 500);
 }
 
+// ── キャラクターモード ─────────────────────────────────────────
+let charMode = 'sprite'; // 'sprite' | 'frames' | 'auto'
+const frameImages     = [null, null, null, null]; // クロップ済み（描画用）
+const frameImagesOrig = [null, null, null, null]; // 元画像（再クロップ用）
+const frameImageCrops = [null, null, null, null]; // クロップ範囲 {sx,sy,sw,sh}
+let autoBaseImg     = null; // クロップ済み（描画用）
+let autoBaseOrigImg = null; // 元画像（再クロップ用）
+let autoBaseImgCrop = null; // クロップ範囲 {sx,sy,sw,sh}
+const autoLM = { mouthY: 70, eyeY: 38, mouthSize: 18 };
+
+function loadImageFromFile(file) {
+  return new Promise((res, rej) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload  = () => { URL.revokeObjectURL(url); res(img); };
+    img.onerror = () => { URL.revokeObjectURL(url); rej(new Error('画像読み込み失敗')); };
+    img.src = url;
+  });
+}
+
+// ── 画像クロップ ─────────────────────────────────────────────
+function clamp(v, min, max) { return Math.min(Math.max(v, min), max); }
+
+// 画像から targetRatio (幅/高さ) に最も近い、中央寄せの最大範囲を返す
+function defaultCropRect(imgW, imgH, targetRatio) {
+  let bw, bh;
+  if (imgW / imgH > targetRatio) { bh = imgH; bw = imgH * targetRatio; }
+  else { bw = imgW; bh = imgW / targetRatio; }
+  return { sx: (imgW - bw) / 2 / imgW, sy: (imgH - bh) / 2 / imgH, sw: bw / imgW, sh: bh / imgH };
+}
+
+// クロップ範囲を切り出して新しいcanvasを返す（長辺はmaxSizeにクランプ）
+function applyCropToCanvas(img, rect, maxSize = 1600) {
+  const sx = rect.sx * img.width,  sy = rect.sy * img.height;
+  const sw = rect.sw * img.width,  sh = rect.sh * img.height;
+  const scale = Math.min(1, maxSize / Math.max(sw, sh));
+  const oc = document.createElement('canvas');
+  oc.width  = Math.max(1, Math.round(sw * scale));
+  oc.height = Math.max(1, Math.round(sh * scale));
+  oc.getContext('2d').drawImage(img, sx, sy, sw, sh, 0, 0, oc.width, oc.height);
+  return oc;
+}
+
+function canvasToThumbDataURL(canvas, maxSize = 160) {
+  const oc = document.createElement('canvas');
+  oc.width = maxSize; oc.height = maxSize;
+  oc.getContext('2d').drawImage(canvas, 0, 0, maxSize, maxSize);
+  return oc.toDataURL();
+}
+
+// クロップモーダルの状態
+const cropState = {
+  img: null, ratio: 1, scale: 1,
+  imgW: 0, imgH: 0,
+  baseW: 0, baseH: 0,
+  boxW: 0, boxH: 0, x: 0, y: 0,
+  onConfirm: null,
+};
+
+function updateCropBoxEl() {
+  const box = document.getElementById('crop-box');
+  box.style.width  = Math.round(cropState.boxW * cropState.scale) + 'px';
+  box.style.height = Math.round(cropState.boxH * cropState.scale) + 'px';
+  box.style.left   = Math.round(cropState.x    * cropState.scale) + 'px';
+  box.style.top    = Math.round(cropState.y    * cropState.scale) + 'px';
+}
+
+// img: クロップ対象画像（HTMLImageElement / canvas）
+// ratio: 切り抜き枠の縦横比（幅/高さ）
+// savedRect: 既存のクロップ範囲（再編集時）。なければ中央最大範囲
+// onConfirm: rect {sx,sy,sw,sh} を受け取るコールバック
+function openCropModal(img, ratio, savedRect, onConfirm) {
+  const displayMax = Math.min(320, window.innerWidth - 64, window.innerHeight - 220);
+
+  cropState.img    = img;
+  cropState.ratio  = ratio;
+  cropState.imgW   = img.width;
+  cropState.imgH   = img.height;
+  cropState.scale  = displayMax / Math.max(img.width, img.height);
+  cropState.onConfirm = onConfirm;
+
+  const base = defaultCropRect(img.width, img.height, ratio);
+  cropState.baseW = base.sw * img.width;
+  cropState.baseH = base.sh * img.height;
+
+  const rect = savedRect || base;
+  cropState.boxW = rect.sw * img.width;
+  cropState.boxH = rect.sh * img.height;
+  cropState.x    = rect.sx * img.width;
+  cropState.y    = rect.sy * img.height;
+
+  const dispW = Math.round(img.width  * cropState.scale);
+  const dispH = Math.round(img.height * cropState.scale);
+
+  const stage = document.getElementById('crop-stage');
+  stage.style.width  = dispW + 'px';
+  stage.style.height = dispH + 'px';
+
+  const canvas = document.getElementById('crop-canvas');
+  canvas.width  = dispW;
+  canvas.height = dispH;
+  canvas.getContext('2d').drawImage(img, 0, 0, dispW, dispH);
+
+  const zoom = clamp(Math.round(cropState.baseW / cropState.boxW * 100), 100, 400);
+  const slZoom = document.getElementById('sl-crop-zoom');
+  slZoom.value = zoom;
+  document.getElementById('crop-zoom-val').textContent = zoom;
+
+  updateCropBoxEl();
+  document.getElementById('crop-modal').style.display = 'flex';
+}
+
+function closeCropModal() {
+  document.getElementById('crop-modal').style.display = 'none';
+  cropState.img = null;
+  cropState.onConfirm = null;
+}
+
+function setupCropModalUI() {
+  const modal  = document.getElementById('crop-modal');
+  const box    = document.getElementById('crop-box');
+  const slZoom = document.getElementById('sl-crop-zoom');
+
+  slZoom.addEventListener('input', () => {
+    const zoom = +slZoom.value;
+    document.getElementById('crop-zoom-val').textContent = zoom;
+    const cx = cropState.x + cropState.boxW / 2;
+    const cy = cropState.y + cropState.boxH / 2;
+    cropState.boxW = cropState.baseW * 100 / zoom;
+    cropState.boxH = cropState.baseH * 100 / zoom;
+    cropState.x = clamp(cx - cropState.boxW / 2, 0, cropState.imgW - cropState.boxW);
+    cropState.y = clamp(cy - cropState.boxH / 2, 0, cropState.imgH - cropState.boxH);
+    updateCropBoxEl();
+  });
+
+  let drag = null;
+  box.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    drag = { startX: e.clientX, startY: e.clientY, origX: cropState.x, origY: cropState.y };
+    box.setPointerCapture(e.pointerId);
+  });
+  box.addEventListener('pointermove', e => {
+    if (!drag) return;
+    const dx = (e.clientX - drag.startX) / cropState.scale;
+    const dy = (e.clientY - drag.startY) / cropState.scale;
+    cropState.x = clamp(drag.origX + dx, 0, cropState.imgW - cropState.boxW);
+    cropState.y = clamp(drag.origY + dy, 0, cropState.imgH - cropState.boxH);
+    updateCropBoxEl();
+  });
+  ['pointerup', 'pointercancel'].forEach(ev => box.addEventListener(ev, () => { drag = null; }));
+
+  document.getElementById('btn-crop-cancel').addEventListener('click', closeCropModal);
+  modal.addEventListener('click', e => { if (e.target === modal) closeCropModal(); });
+
+  document.getElementById('btn-crop-confirm').addEventListener('click', () => {
+    const rect = {
+      sx: cropState.x    / cropState.imgW,
+      sy: cropState.y    / cropState.imgH,
+      sw: cropState.boxW / cropState.imgW,
+      sh: cropState.boxH / cropState.imgH,
+    };
+    const cb = cropState.onConfirm;
+    closeCropModal();
+    cb(rect);
+  });
+}
+
+function buildFramesFromImages(imgs) {
+  const maxW = Math.max(...imgs.map(i => i.width));
+  const maxH = Math.max(...imgs.map(i => i.height));
+  const [tr, tg, tb] = hexToRgb(cfg.chromaColor);
+  frames = imgs.map(img => {
+    const oc = document.createElement('canvas');
+    oc.width  = maxW; oc.height = maxH;
+    const c   = oc.getContext('2d');
+    c.drawImage(img, 0, 0, maxW, maxH);
+    const id  = c.getImageData(0, 0, maxW, maxH);
+    removeChromaKey(id.data, tr, tg, tb);
+    c.putImageData(id, 0, 0);
+    return oc;
+  });
+  frameW = maxW; frameH = maxH;
+}
+
+function sampleColor(img, xRatio, yRatio) {
+  const oc = document.createElement('canvas');
+  oc.width = 1; oc.height = 1;
+  const ctx = oc.getContext('2d');
+  ctx.drawImage(img,
+    Math.round(img.width * xRatio), Math.round(img.height * yRatio), 1, 1,
+    0, 0, 1, 1);
+  const d = ctx.getImageData(0, 0, 1, 1).data;
+  return `rgba(${d[0]},${d[1]},${d[2]},${(d[3] / 255).toFixed(2)})`;
+}
+
+function generateFrame(baseImg, mouthOpen, eyesClosed) {
+  const w = baseImg.width, h = baseImg.height;
+  const oc = document.createElement('canvas');
+  oc.width = w; oc.height = h;
+  const ctx = oc.getContext('2d');
+  ctx.drawImage(baseImg, 0, 0);
+
+  const mCY  = h * autoLM.mouthY   / 100;
+  const mRx  = w * autoLM.mouthSize / 100;
+  const mRy  = mRx * 0.55;
+  const eCY  = h * autoLM.eyeY / 100;
+  const eSpan = w * 0.17;
+  const eLX  = w * 0.34, eRX = w * 0.66;
+  const eRy  = h * 0.045;
+
+  if (mouthOpen) {
+    ctx.fillStyle = '#1a0800';
+    ctx.beginPath();
+    ctx.ellipse(w * 0.5, mCY, mRx, mRy, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#f5eedf';
+    ctx.beginPath();
+    ctx.ellipse(w * 0.5, mCY - mRy * 0.15, mRx * 0.72, mRy * 0.5, 0, Math.PI, Math.PI * 2);
+    ctx.fill();
+  }
+
+  if (eyesClosed) {
+    const skin = sampleColor(baseImg, 0.5, 0.18);
+    [eLX, eRX].forEach(cx => {
+      ctx.fillStyle = skin;
+      ctx.beginPath();
+      ctx.ellipse(cx, eCY, eSpan * 0.62, eRy * 2.2, 0, 0, Math.PI * 2);
+      ctx.fill();
+    });
+    ctx.strokeStyle = '#333';
+    ctx.lineWidth   = Math.max(1.5, h * 0.011);
+    ctx.lineCap     = 'round';
+    [eLX, eRX].forEach(cx => {
+      ctx.beginPath();
+      ctx.moveTo(cx - eSpan * 0.58, eCY);
+      ctx.quadraticCurveTo(cx, eCY + eRy * 2.4, cx + eSpan * 0.58, eCY);
+      ctx.stroke();
+    });
+  }
+  return oc;
+}
+
+function generateAutoFrames() {
+  if (!autoBaseImg) return null;
+  return [
+    generateFrame(autoBaseImg, true,  false),
+    generateFrame(autoBaseImg, true,  true),
+    generateFrame(autoBaseImg, false, false),
+    generateFrame(autoBaseImg, false, true),
+  ];
+}
+
+function applyGeneratedFrames(canvases) {
+  const [tr, tg, tb] = hexToRgb(cfg.chromaColor);
+  frames = canvases.map(src => {
+    const oc = document.createElement('canvas');
+    oc.width = src.width; oc.height = src.height;
+    const c  = oc.getContext('2d');
+    c.drawImage(src, 0, 0);
+    const id = c.getImageData(0, 0, oc.width, oc.height);
+    removeChromaKey(id.data, tr, tg, tb);
+    c.putImageData(id, 0, 0);
+    return oc;
+  });
+  frameW = frames[0].width;
+  frameH = frames[0].height;
+}
+
+function rebuildCurrentMode() {
+  if (charMode === 'sprite') {
+    buildFrames();
+  } else if (charMode === 'frames' && frameImages.every(f => f !== null)) {
+    buildFramesFromImages(frameImages);
+  } else if (charMode === 'auto' && autoBaseImg) {
+    applyGeneratedFrames(generateAutoFrames());
+  }
+}
+
+function scheduleRebuildCurrent() {
+  clearTimeout(rebuildTimer);
+  rebuildTimer = setTimeout(rebuildCurrentMode, 250);
+}
+
+function updateAutoPreview() {
+  const gen  = generateAutoFrames();
+  if (!gen) return;
+  const grid = document.getElementById('auto-preview-grid');
+  grid.innerHTML = '';
+  ['口あき/目あき', '口あき/目とじ', '口とじ/目あき', '口とじ/目とじ'].forEach((lbl, i) => {
+    const cell  = document.createElement('div');
+    cell.className = 'auto-preview-cell';
+    const scaled = document.createElement('canvas');
+    scaled.width  = gen[i].width;
+    scaled.height = gen[i].height;
+    scaled.getContext('2d').drawImage(gen[i], 0, 0);
+    cell.appendChild(scaled);
+    const label = document.createElement('div');
+    label.className   = 'auto-preview-label';
+    label.textContent = lbl;
+    cell.appendChild(label);
+    grid.appendChild(cell);
+  });
+}
+
+function updateFrameThumb(slot) {
+  const thumb = document.getElementById(`frame-thumb-${slot}`);
+  thumb.innerHTML = '';
+  const imgEl = document.createElement('img');
+  imgEl.src = canvasToThumbDataURL(frameImages[slot]);
+  thumb.appendChild(imgEl);
+  thumb.classList.add('has-img');
+  document.querySelector(`.frame-slot-edit-btn[data-frame="${slot}"]`).style.display = '';
+}
+
+function switchCharTab(mode) {
+  document.querySelectorAll('.char-tab').forEach(t => {
+    t.classList.toggle('active', t.dataset.tab === mode);
+  });
+  document.getElementById('char-tab-sprite').style.display = mode === 'sprite' ? '' : 'none';
+  document.getElementById('char-tab-frames').style.display = mode === 'frames' ? '' : 'none';
+  document.getElementById('char-tab-auto').style.display   = mode === 'auto'   ? '' : 'none';
+  charMode = mode;
+}
+
+function setupCharModeUI() {
+  let pendingSlot = 0;
+
+  document.querySelectorAll('.char-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      switchCharTab(tab.dataset.tab);
+      localStorage.setItem('kp-charMode', tab.dataset.tab);
+    });
+  });
+
+  // 4枚バラ
+  const fileFrame = document.getElementById('file-frame');
+  document.querySelectorAll('.frame-slot-thumb').forEach(thumb => {
+    thumb.addEventListener('click', () => {
+      pendingSlot = +thumb.dataset.frame;
+      fileFrame.click();
+    });
+  });
+
+  fileFrame.addEventListener('change', async e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    try {
+      const img = await loadImageFromFile(file);
+      const slot = pendingSlot;
+      openCropModal(img, 1, null, async rect => {
+        frameImagesOrig[slot] = img;
+        frameImageCrops[slot] = rect;
+        frameImages[slot]     = applyCropToCanvas(img, rect);
+        updateFrameThumb(slot);
+        await dbSet(`frameImage${slot}`, file);
+        await dbSet(`frameImageCrop${slot}`, rect);
+        await dbSet('charMode', 'frames');
+        document.getElementById('btn-frames-apply').disabled = !frameImages.every(f => f !== null);
+      });
+    } catch { alert('画像の読み込みに失敗しました。'); }
+    e.target.value = '';
+  });
+
+  document.querySelectorAll('.frame-slot-edit-btn').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      const slot = +btn.dataset.frame;
+      if (!frameImagesOrig[slot]) return;
+      openCropModal(frameImagesOrig[slot], 1, frameImageCrops[slot], async rect => {
+        frameImageCrops[slot] = rect;
+        frameImages[slot]     = applyCropToCanvas(frameImagesOrig[slot], rect);
+        updateFrameThumb(slot);
+        await dbSet(`frameImageCrop${slot}`, rect);
+        if (charMode === 'frames' && frameImages.every(f => f !== null)) {
+          buildFramesFromImages(frameImages);
+        }
+      });
+    });
+  });
+
+  document.getElementById('btn-frames-apply').addEventListener('click', () => {
+    if (!frameImages.every(f => f !== null)) return;
+    buildFramesFromImages(frameImages);
+  });
+
+  // 1枚から作る
+  const fileAuto = document.getElementById('file-auto');
+  document.getElementById('btn-auto-img').addEventListener('click', () => fileAuto.click());
+
+  fileAuto.addEventListener('change', async e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    try {
+      const img = await loadImageFromFile(file);
+      openCropModal(img, 1, null, async rect => {
+        autoBaseOrigImg = img;
+        autoBaseImgCrop = rect;
+        autoBaseImg     = applyCropToCanvas(img, rect);
+        document.getElementById('auto-img-name').textContent       = file.name;
+        document.getElementById('btn-auto-generate').disabled      = false;
+        document.getElementById('auto-landmark-area').style.display = '';
+        document.getElementById('auto-preview-grid').style.display  = 'none';
+        document.getElementById('btn-auto-apply').style.display     = 'none';
+        document.getElementById('btn-auto-crop-edit').style.display = '';
+        await dbSet('autoBaseImage', file);
+        await dbSet('autoBaseImageCrop', rect);
+        await dbSet('charMode', 'auto');
+      });
+    } catch { alert('画像の読み込みに失敗しました。'); }
+    e.target.value = '';
+  });
+
+  document.getElementById('btn-auto-crop-edit').addEventListener('click', () => {
+    if (!autoBaseOrigImg) return;
+    openCropModal(autoBaseOrigImg, 1, autoBaseImgCrop, async rect => {
+      autoBaseImgCrop = rect;
+      autoBaseImg     = applyCropToCanvas(autoBaseOrigImg, rect);
+      await dbSet('autoBaseImageCrop', rect);
+      if (document.getElementById('auto-preview-grid').style.display !== 'none') {
+        updateAutoPreview();
+      } else if (charMode === 'auto') {
+        applyGeneratedFrames(generateAutoFrames());
+      }
+    });
+  });
+
+  [
+    ['sl-mouth-y',    'n-mouth-y',    'mouthY'],
+    ['sl-eye-y',      'n-eye-y',      'eyeY'],
+    ['sl-mouth-size', 'n-mouth-size', 'mouthSize'],
+  ].forEach(([slId, nId, key]) => {
+    const sl = document.getElementById(slId);
+    const ni = document.getElementById(nId);
+    const apply = v => {
+      autoLM[key] = v; sl.value = ni.value = v;
+      if (document.getElementById('auto-preview-grid').style.display !== 'none') {
+        updateAutoPreview();
+      }
+    };
+    sl.addEventListener('input',  () => apply(+sl.value));
+    ni.addEventListener('change', () => apply(+ni.value));
+  });
+
+  document.getElementById('btn-auto-generate').addEventListener('click', () => {
+    if (!autoBaseImg) return;
+    updateAutoPreview();
+    document.getElementById('auto-preview-grid').style.display = '';
+    document.getElementById('btn-auto-apply').style.display    = '';
+  });
+
+  document.getElementById('btn-auto-apply').addEventListener('click', () => {
+    const gen = generateAutoFrames();
+    if (!gen) return;
+    applyGeneratedFrames(gen);
+  });
+}
+
 // ── IndexedDB（画像の永続化） ─────────────────────────────────
 let _db = null;
 
@@ -197,9 +661,9 @@ function initCanvas() {
 }
 
 function calcCanvasSize(base) {
-  return cfg.aspectRatio === '9:16'
-    ? [base, Math.round(base * 16 / 9)]
-    : [base, base];
+  if (cfg.aspectRatio === '9:16') return [base, Math.round(base * 16 / 9)];
+  if (cfg.aspectRatio === '16:9') return [base, Math.round(base * 9 / 16)];
+  return [base, base];
 }
 
 function resizeCanvas(base) {
@@ -300,6 +764,63 @@ function getSupportedMimeType() {
     .find(t => MediaRecorder.isTypeSupported(t)) || '';
 }
 
+// OPFS（Origin Private File System）+ Web Worker による長時間録画に対応しているか
+function opfsAvailable() {
+  return typeof Worker !== 'undefined' &&
+         typeof navigator.storage?.getDirectory === 'function';
+}
+
+// 録画用Workerを起動し、OPFS上に出力ファイルを準備する。失敗時はnull（RAM方式へフォールバック）
+function initOPFSWorker(fileName) {
+  return new Promise(resolve => {
+    let worker;
+    try {
+      worker = new Worker('rec-worker.js');
+    } catch {
+      resolve(null);
+      return;
+    }
+    const timeout = setTimeout(() => { worker.terminate(); resolve(null); }, 5000);
+    worker.onmessage = e => {
+      clearTimeout(timeout);
+      worker.onmessage = null;
+      if (e.data.type === 'ready') {
+        resolve(worker);
+      } else {
+        worker.terminate();
+        resolve(null);
+      }
+    };
+    worker.onerror = () => {
+      clearTimeout(timeout);
+      worker.terminate();
+      resolve(null);
+    };
+    worker.postMessage({ type: 'init', fileName });
+  });
+}
+
+// 前回のクラッシュ等で残ったOPFS上の一時録画ファイルを削除する
+async function cleanupOPFSTempFiles() {
+  if (typeof navigator.storage?.getDirectory !== 'function') return;
+  try {
+    const dir = await navigator.storage.getDirectory();
+    for await (const name of dir.keys()) {
+      if (/^kuchipaku-rec-.*\.tmp$/.test(name)) {
+        await dir.removeEntry(name).catch(() => {});
+      }
+    }
+  } catch {}
+}
+
+async function removeOPFSFile(fileName) {
+  if (!fileName) return;
+  try {
+    const dir = await navigator.storage.getDirectory();
+    await dir.removeEntry(fileName);
+  } catch {}
+}
+
 async function startRecording() {
   if (rec.active) return;
 
@@ -324,14 +845,40 @@ async function startRecording() {
       ...audio.stream.getAudioTracks(),
     ]);
     const mimeType = getSupportedMimeType();
+
+    rec.chunks       = [];
+    rec.worker       = null;
+    rec.useOPFS      = false;
+    rec.opfsFileName = null;
+    rec.opfsChain    = null;
+
+    if (opfsAvailable()) {
+      rec.opfsFileName = `kuchipaku-rec-${Date.now()}.tmp`;
+      rec.worker  = await initOPFSWorker(rec.opfsFileName);
+      rec.useOPFS = !!rec.worker;
+    }
+
     rec.mediaRecorder = new MediaRecorder(
       combinedStream,
       mimeType ? { mimeType } : {}
     );
-    rec.chunks = [];
-    rec.mediaRecorder.ondataavailable = e => { if (e.data.size > 0) rec.chunks.push(e.data); };
+    rec.mimeType = rec.mediaRecorder.mimeType || mimeType || 'video/mp4';
+
+    rec.mediaRecorder.ondataavailable = e => {
+      if (e.data.size === 0) return;
+      if (rec.useOPFS) {
+        // チャンクの到着順を保ったままOPFSへ書き込む（順序が崩れると動画が壊れる）
+        const blob = e.data;
+        rec.opfsChain = (rec.opfsChain || Promise.resolve())
+          .then(() => blob.arrayBuffer())
+          .then(buf => { rec.worker?.postMessage({ type: 'chunk', buffer: buf }, [buf]); });
+      } else {
+        rec.chunks.push(e.data);
+      }
+    };
     rec.mediaRecorder.onstop = saveRecording;
-    rec.mediaRecorder.start(100);
+    // OPFS方式は1秒ごとにまとめて書き込み、メッセージ送信回数を抑える
+    rec.mediaRecorder.start(rec.useOPFS ? 1000 : 100);
     rec.active    = true;
     rec.startTime = Date.now();
     updateRecordBtn(true);
@@ -350,11 +897,54 @@ function stopRecording() {
   updateRecordBtn(false);
 }
 
+// OPFSへの書き込みを終了し、完成した録画ファイルをBlobとして取得する
+async function finalizeOPFSRecording(mimeType) {
+  const worker = rec.worker;
+  await (rec.opfsChain || Promise.resolve());
+
+  await new Promise(resolve => {
+    worker.addEventListener('message', function handle(e) {
+      worker.removeEventListener('message', handle);
+      resolve(e.data);
+    });
+    worker.postMessage({ type: 'finish' });
+  });
+  worker.terminate();
+
+  try {
+    const dir = await navigator.storage.getDirectory();
+    const fileHandle = await dir.getFileHandle(rec.opfsFileName);
+    const file = await fileHandle.getFile();
+    return new Blob([file], { type: mimeType });
+  } catch (err) {
+    console.error('OPFSファイルの読み込みに失敗:', err);
+    return null;
+  }
+}
+
 async function saveRecording() {
-  const mimeType = rec.mediaRecorder.mimeType || 'video/mp4';
+  const mimeType = rec.mimeType || rec.mediaRecorder.mimeType || 'video/mp4';
   const ext      = mimeType.startsWith('video/mp4') ? 'mp4' : 'webm';
-  const blob     = new Blob(rec.chunks, { type: mimeType });
   const fileName = `kuchipaku-${new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-')}.${ext}`;
+
+  const opfsFileName = rec.opfsFileName;
+  let blob;
+  if (rec.useOPFS && rec.worker) {
+    blob = await finalizeOPFSRecording(mimeType);
+  } else {
+    blob = new Blob(rec.chunks, { type: mimeType });
+  }
+  rec.chunks       = [];
+  rec.worker       = null;
+  rec.useOPFS      = false;
+  rec.opfsFileName = null;
+  rec.opfsChain    = null;
+
+  if (!blob) {
+    alert('録画データの保存に失敗しました。');
+    await removeOPFSFile(opfsFileName);
+    return;
+  }
 
   // iOS では Web Share API でネイティブ共有シートを開く（カメラロール保存可）
   if (navigator.canShare) {
@@ -362,6 +952,7 @@ async function saveRecording() {
     try {
       if (navigator.canShare({ files: [file] })) {
         await navigator.share({ files: [file], title: 'KuchiPaku 録画' });
+        await removeOPFSFile(opfsFileName);
         return;
       }
     } catch (e) {
@@ -378,12 +969,14 @@ async function saveRecording() {
   a.click();
   document.body.removeChild(a);
   setTimeout(() => URL.revokeObjectURL(url), 10000);
+  await removeOPFSFile(opfsFileName);
 }
 
 function updateRecordBtn(on) {
-  const b   = document.getElementById('btn-record');
-  const bo  = document.getElementById('btn-record-overlay');
-  const ind = document.getElementById('rec-indicator');
+  const b      = document.getElementById('btn-record');
+  const bo     = document.getElementById('btn-record-overlay');
+  const ind    = document.getElementById('rec-indicator');
+  const indPnl = document.getElementById('rec-indicator-panel');
   if (b) {
     b.textContent = on ? '■ 録画停止' : '● 録画開始';
     b.className   = 'btn w100 ' + (on ? 'btn-rec-stop' : 'btn-rec-start');
@@ -393,14 +986,24 @@ function updateRecordBtn(on) {
     bo.classList.toggle('active', on);
   }
   if (ind) ind.style.display = on ? 'flex' : 'none';
+  if (indPnl) indPnl.style.display = on ? 'flex' : 'none';
+  if (!on) {
+    const t = '00:00';
+    const elOverlay = document.getElementById('rec-time');
+    const elPanel   = document.getElementById('rec-time-panel');
+    if (elOverlay) elOverlay.textContent = t;
+    if (elPanel)   elPanel.textContent   = t;
+  }
 }
 
 function startRecordTimer() {
-  const el = document.getElementById('rec-time');
+  const elOverlay = document.getElementById('rec-time');
+  const elPanel   = document.getElementById('rec-time-panel');
   rec.timerInterval = setInterval(() => {
-    if (!el) return;
     const s = Math.floor((Date.now() - rec.startTime) / 1000);
-    el.textContent = `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+    const t = `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+    if (elOverlay) elOverlay.textContent = t;
+    if (elPanel)   elPanel.textContent   = t;
   }, 500);
 }
 
@@ -472,7 +1075,15 @@ function render() {
   switch (cfg.bgMode) {
     case 'chroma': cx.fillStyle = '#00FF00'; cx.fillRect(0, 0, cv.width, cv.height); break;
     case 'color':  cx.fillStyle = cfg.bgColor; cx.fillRect(0, 0, cv.width, cv.height); break;
-    case 'image':  if (cfg.bgImage) cx.drawImage(cfg.bgImage, 0, 0, cv.width, cv.height); break;
+    case 'image':
+      if (cfg.bgImage) {
+        const r = cfg.bgImageCrop || defaultCropRect(cfg.bgImage.width, cfg.bgImage.height, cv.width / cv.height);
+        cx.drawImage(cfg.bgImage,
+          r.sx * cfg.bgImage.width, r.sy * cfg.bgImage.height,
+          r.sw * cfg.bgImage.width, r.sh * cfg.bgImage.height,
+          0, 0, cv.width, cv.height);
+      }
+      break;
   }
   if (frames.length) {
     const drawW = Math.round(cv.width * cfg.charScale / 100);
@@ -500,6 +1111,9 @@ let isBroadcast = false;
 function broadcastBase() {
   if (cfg.aspectRatio === '9:16') {
     return Math.min(window.innerWidth, Math.floor(window.innerHeight * 9 / 16));
+  }
+  if (cfg.aspectRatio === '16:9') {
+    return Math.min(window.innerWidth, Math.floor(window.innerHeight * 16 / 9));
   }
   return Math.min(window.innerWidth, window.innerHeight);
 }
@@ -729,6 +1343,7 @@ function setupUI() {
   });
 
   setupCropUI();
+  setupCropModalUI();
 
   // マイク
   document.getElementById('btn-mic').addEventListener('click', () => {
@@ -751,6 +1366,10 @@ function setupUI() {
     radio.addEventListener('change', () => {
       cfg.aspectRatio = radio.value;
       resizeCanvas(isBroadcast ? broadcastBase() : cfg.charSize);
+      // 画面比率が変わると背景画像のクロップ範囲が合わなくなるため、新しい比率に合わせて再設定
+      if (cfg.bgImage) {
+        cfg.bgImageCrop = defaultCropRect(cfg.bgImage.width, cfg.bgImage.height, cv.width / cv.height);
+      }
     });
   });
 
@@ -782,9 +1401,25 @@ function setupUI() {
     if (!file) return;
     const img = new Image();
     const bgUrl = URL.createObjectURL(file);
-    img.onload = () => { cfg.bgImage = img; URL.revokeObjectURL(bgUrl); };
+    img.onload = () => {
+      URL.revokeObjectURL(bgUrl);
+      const ratio = cv.width / cv.height;
+      openCropModal(img, ratio, null, rect => {
+        cfg.bgImage     = img;
+        cfg.bgImageCrop = rect;
+        document.getElementById('img-name').textContent = file.name;
+        document.getElementById('btn-bg-crop-edit').style.display = '';
+      });
+    };
     img.src = bgUrl;
-    document.getElementById('img-name').textContent = file.name;
+  });
+
+  document.getElementById('btn-bg-crop-edit').addEventListener('click', () => {
+    if (!cfg.bgImage) return;
+    const ratio = cv.width / cv.height;
+    openCropModal(cfg.bgImage, ratio, cfg.bgImageCrop, rect => {
+      cfg.bgImageCrop = rect;
+    });
   });
 
   // ── キャラクター画像変更 ──────────────────────────────────
@@ -816,13 +1451,15 @@ function setupUI() {
   // ── クロマキー色・許容範囲 ───────────────────────────────
   document.getElementById('chroma-color').addEventListener('change', e => {
     cfg.chromaColor = e.target.value;
-    buildFrames();
+    rebuildCurrentMode();
   });
 
   linkSlider('sl-chroma', 'n-chroma', v => {
     cfg.chromaTolerance = v;
-    scheduleRebuild();
+    scheduleRebuildCurrent();
   });
+
+  setupCharModeUI();
 
   // プリセット
   [1, 2].forEach(slot => {
@@ -881,6 +1518,7 @@ async function boot() {
   setupUI();
   vfillEl = document.getElementById('vfill');
   setupResumeOnInteraction();
+  cleanupOPFSTempFiles();
 
   const savedCropOffsets = await dbGet('cropOffsets');
   if (savedCropOffsets) {
@@ -888,8 +1526,53 @@ async function boot() {
     refreshCropUI();
   }
 
+  const savedMode = await dbGet('charMode') || localStorage.getItem('kp-charMode') || 'sprite';
+
+  if (savedMode === 'frames') {
+    try {
+      const files = await Promise.all([0, 1, 2, 3].map(i => dbGet(`frameImage${i}`)));
+      if (files.every(f => f !== null)) {
+        const imgs  = await Promise.all(files.map(f => loadImageFromFile(f)));
+        const crops = await Promise.all([0, 1, 2, 3].map(i => dbGet(`frameImageCrop${i}`)));
+        imgs.forEach((img, i) => {
+          frameImagesOrig[i] = img;
+          const rect = crops[i] || defaultCropRect(img.width, img.height, 1);
+          frameImageCrops[i] = rect;
+          frameImages[i]     = applyCropToCanvas(img, rect);
+          updateFrameThumb(i);
+        });
+        document.getElementById('btn-frames-apply').disabled = false;
+        buildFramesFromImages(frameImages);
+        switchCharTab('frames');
+        requestAnimationFrame(loop);
+        return;
+      }
+    } catch { /* fallthrough to default */ }
+  }
+
+  if (savedMode === 'auto') {
+    try {
+      const file = await dbGet('autoBaseImage');
+      if (file) {
+        const img  = await loadImageFromFile(file);
+        const rect = await dbGet('autoBaseImageCrop') || defaultCropRect(img.width, img.height, 1);
+        autoBaseOrigImg = img;
+        autoBaseImgCrop = rect;
+        autoBaseImg     = applyCropToCanvas(img, rect);
+        document.getElementById('auto-img-name').textContent       = file.name;
+        document.getElementById('btn-auto-generate').disabled      = false;
+        document.getElementById('auto-landmark-area').style.display = '';
+        document.getElementById('btn-auto-crop-edit').style.display = '';
+        applyGeneratedFrames(generateAutoFrames());
+        switchCharTab('auto');
+        requestAnimationFrame(loop);
+        return;
+      }
+    } catch { /* fallthrough to default */ }
+  }
+
+  // デフォルト: スプライトシートモード
   try {
-    // IndexedDB に保存済みの画像があれば復元
     const savedFile = await dbGet('charImage');
     if (savedFile) {
       const savedUrl = URL.createObjectURL(savedFile);
@@ -901,7 +1584,6 @@ async function boot() {
       await loadSpriteFromUrl('character.png');
     }
   } catch {
-    // フォールバック: デフォルト画像
     try {
       await loadSpriteFromUrl('character.png');
     } catch {

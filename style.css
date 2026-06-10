@@ -527,10 +527,212 @@ body.with-ui #checker-wrap {
   font-variant-numeric: tabular-nums;
 }
 
+.rec-indicator-panel {
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+#rec-time-panel {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
 @keyframes rec-pulse {
   0%, 100% { opacity: 1; }
   50%       { opacity: .2; }
 }
+
+/* ── Char mode tabs ─────────────────────────────────────── */
+.char-mode-tabs {
+  display: flex;
+  gap: 3px;
+  background: var(--bg);
+  padding: 3px;
+  border-radius: 6px;
+}
+
+.char-tab {
+  flex: 1;
+  padding: 5px 4px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.char-tab.active {
+  background: var(--accent);
+  color: #fff;
+}
+
+/* ── 4枚バラ frame grid ─────────────────────────────────── */
+.frame-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.frame-slot {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  align-items: center;
+}
+
+.frame-slot-thumb {
+  width: 100%;
+  aspect-ratio: 1;
+  border: 2px dashed var(--border);
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  color: var(--muted);
+  text-align: center;
+  line-height: 1.5;
+  overflow: hidden;
+  background: var(--bg);
+  cursor: pointer;
+  transition: border-color 0.15s;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.frame-slot-thumb:hover { border-color: var(--accent); }
+
+.frame-slot-thumb.has-img {
+  border-style: solid;
+  border-color: var(--accent);
+}
+
+.frame-slot-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.frame-slot-label {
+  font-size: 10px;
+  color: var(--muted);
+  text-align: center;
+}
+
+/* ── Auto generate preview grid ─────────────────────────── */
+.auto-preview-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  margin: 2px 0;
+}
+
+.auto-preview-cell {
+  aspect-ratio: 1;
+  border-radius: 4px;
+  overflow: hidden;
+  position: relative;
+  background: var(--bg);
+  border: 1px solid var(--border);
+}
+
+.auto-preview-cell canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.auto-preview-label {
+  position: absolute;
+  bottom: 2px;
+  left: 2px;
+  font-size: 9px;
+  color: rgba(255,255,255,0.8);
+  background: rgba(0,0,0,0.55);
+  padding: 1px 4px;
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+/* ── Crop modal ──────────────────────────────────────────── */
+.crop-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0,0,0,.65);
+  padding: 16px;
+}
+
+.crop-modal-inner {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 100%;
+}
+
+.crop-modal-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+  text-align: center;
+}
+
+.crop-stage {
+  position: relative;
+  overflow: hidden;
+  border-radius: 4px;
+  background: #000;
+  touch-action: none;
+  align-self: center;
+}
+
+.crop-stage canvas {
+  display: block;
+  user-select: none;
+  pointer-events: none;
+}
+
+#crop-box {
+  position: absolute;
+  border: 2px solid var(--accent);
+  box-shadow: 0 0 0 9999px rgba(0,0,0,.55);
+  cursor: move;
+  touch-action: none;
+}
+
+.crop-modal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+/* ── 切り抜き編集ボタン ──────────────────────────────────── */
+.frame-slot-edit-btn {
+  font-size: 10px;
+  padding: 3px 8px;
+  background: var(--border);
+  color: var(--text);
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.frame-slot-edit-btn:hover { filter: brightness(1.2); }
 
 /* ── Mobile / iPhone ────────────────────────────────────── */
 @media (max-width: 580px) {

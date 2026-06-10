@@ -1,5 +1,5 @@
 // KuchiPaku Service Worker — PWAオフライン対応
-const CACHE = 'kuchipaku-v2';
+const CACHE = 'kuchipaku-v3';
 
 // キャッシュ優先（変化しないアセット）
 const STATIC_ASSETS = [
@@ -13,6 +13,7 @@ const LIVE_ASSETS = [
   './index.html',
   './style.css',
   './app.js',
+  './rec-worker.js',
 ];
 
 self.addEventListener('install', e => {
