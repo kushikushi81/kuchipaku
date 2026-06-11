@@ -976,6 +976,28 @@ async function saveRecording() {
     return;
   }
 
+  // Windows等のデスクトップ（File System Access API対応）では保存先を選択するダイアログを表示
+  if (window.showSaveFilePicker) {
+    const baseMime = mimeType.split(';')[0].trim();
+    try {
+      const handle = await window.showSaveFilePicker({
+        suggestedName: fileName,
+        types: [{ description: '動画ファイル', accept: { [baseMime]: [`.${ext}`] } }],
+      });
+      const writable = await handle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+      await removeOPFSFile(opfsFileName);
+      return;
+    } catch (e) {
+      if (e.name === 'AbortError') {
+        await removeOPFSFile(opfsFileName);
+        return;
+      }
+      console.warn('showSaveFilePicker failed:', e);
+    }
+  }
+
   // iOS では Web Share API でネイティブ共有シートを開く（カメラロール保存可）
   if (navigator.canShare) {
     const file = new File([blob], fileName, { type: mimeType });
