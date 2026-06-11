@@ -35,19 +35,22 @@ const cfg = {
 
 // ── 音声状態 ──────────────────────────────────────────────────
 const audio = {
-  ctx:        null,
-  analyser:   null,
-  compressor: null,
-  gainNode:   null,
-  stream:     null,
-  active:     false,
+  ctx:            null,
+  analyser:       null,
+  compressor:     null,
+  gainNode:       null,
+  recGainNode:    null,
+  recDestination: null,
+  stream:         null,
+  active:         false,
 };
 
 // 'high'(収録向け)はAGCが効きにくく入力レベルが環境によって大きくばらつくため、
-// 口パク判定用の信号のみDynamicsCompressor+メイクアップゲインで底上げ・平準化する
-// （録音される音声には影響しない）
+// 口パク判定用・録音用それぞれの信号をDynamicsCompressor+メイクアップゲインで
+// 底上げ・平準化する（判定用と録音用で別々のゲイン値を使う）
 const MIC_DETECT_COMPRESSOR = { threshold: -60, knee: 0, ratio: 12, attack: 0.003, release: 0.25 };
 const MIC_DETECT_MAKEUP_GAIN = 4;
+const MIC_RECORD_MAKEUP_GAIN = 6;
 let audioBuf = null;
 
 // ── 録画状態 ──────────────────────────────────────────────────
@@ -750,9 +753,17 @@ async function startMic() {
       audio.compressor.ratio.value     = MIC_DETECT_COMPRESSOR.ratio;
       audio.compressor.attack.value    = MIC_DETECT_COMPRESSOR.attack;
       audio.compressor.release.value   = MIC_DETECT_COMPRESSOR.release;
+      source.connect(audio.compressor);
+
       audio.gainNode = audio.ctx.createGain();
       audio.gainNode.gain.value = MIC_DETECT_MAKEUP_GAIN;
-      source.connect(audio.compressor).connect(audio.gainNode).connect(audio.analyser);
+      audio.compressor.connect(audio.gainNode).connect(audio.analyser);
+
+      // 録音される音声トラックも同じコンプレッサーを通し、別ゲインで底上げする
+      audio.recGainNode = audio.ctx.createGain();
+      audio.recGainNode.gain.value = MIC_RECORD_MAKEUP_GAIN;
+      audio.recDestination = audio.ctx.createMediaStreamDestination();
+      audio.compressor.connect(audio.recGainNode).connect(audio.recDestination);
     } else {
       source.connect(audio.analyser);
     }
@@ -769,8 +780,9 @@ function stopMic() {
   clearTimeout(micReconnectTimer);
   audio.stream?.getTracks().forEach(t => t.stop());
   audio.gainNode?.disconnect();
+  audio.recGainNode?.disconnect();
   audio.compressor?.disconnect();
-  audio.stream = audio.analyser = audio.compressor = audio.gainNode = null;
+  audio.stream = audio.analyser = audio.compressor = audio.gainNode = audio.recGainNode = audio.recDestination = null;
   audioBuf = null;
   audio.active = false;
   updateMicBtn(false);
@@ -870,9 +882,13 @@ async function startRecording() {
 
   try {
     const canvasStream    = cv.captureStream(30);
+    // 'high'(収録向け)はコンプレッサー+メイクアップゲインで底上げした音声を録音する
+    const audioTracks     = audio.recDestination
+      ? audio.recDestination.stream.getAudioTracks()
+      : audio.stream.getAudioTracks();
     const combinedStream  = new MediaStream([
       ...canvasStream.getVideoTracks(),
-      ...audio.stream.getAudioTracks(),
+      ...audioTracks,
     ]);
     const mimeType = getSupportedMimeType();
 
