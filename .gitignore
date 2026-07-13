@@ -1,0 +1,3 @@
+# 同期サーバーの実行時状態（server.py が生成）
+sync-state.json
+sync-state.json.tmp
