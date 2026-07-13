@@ -45,10 +45,9 @@ const audio = {
   active:         false,
 };
 
-// 入力レベルは環境によって大きくばらつくため、口パク判定用の信号は
-// マイク音質モードを問わずDynamicsCompressor+メイクアップゲインで底上げ・平準化する
-// （両モードで同じ判定チェーンを通すことで感度スライダーの効きを揃える）。
-// 'high'(収録向け)はさらに録音用の信号も同じコンプレッサー+別ゲインで底上げする
+// 'high'(収録向け)はAGCが効きにくく入力レベルが環境によって大きくばらつくため、
+// 口パク判定用・録音用それぞれの信号をDynamicsCompressor+メイクアップゲインで
+// 底上げ・平準化する（判定用と録音用で別々のゲイン値を使う）
 const MIC_DETECT_COMPRESSOR = { threshold: -60, knee: 0, ratio: 12, attack: 0.003, release: 0.25 };
 const MIC_DETECT_MAKEUP_GAIN = 2;
 const MIC_RECORD_MAKEUP_GAIN = 6;
@@ -758,27 +757,26 @@ async function startMic() {
     audio.analyser.fftSize = 256;
     audioBuf = new Uint8Array(audio.analyser.fftSize);
     const source = audio.ctx.createMediaStreamSource(audio.stream);
-    // 口パク判定はモードを問わず同じコンプレッサー+ゲインを通す
-    // （'voice'を無加工で判定すると'high'と感度が大きくずれるため）
-    audio.compressor = audio.ctx.createDynamicsCompressor();
-    audio.compressor.threshold.value = MIC_DETECT_COMPRESSOR.threshold;
-    audio.compressor.knee.value      = MIC_DETECT_COMPRESSOR.knee;
-    audio.compressor.ratio.value     = MIC_DETECT_COMPRESSOR.ratio;
-    audio.compressor.attack.value    = MIC_DETECT_COMPRESSOR.attack;
-    audio.compressor.release.value   = MIC_DETECT_COMPRESSOR.release;
-    source.connect(audio.compressor);
-
-    audio.gainNode = audio.ctx.createGain();
-    audio.gainNode.gain.value = MIC_DETECT_MAKEUP_GAIN;
-    audio.compressor.connect(audio.gainNode).connect(audio.analyser);
-
     if (cfg.micQuality === 'high') {
+      audio.compressor = audio.ctx.createDynamicsCompressor();
+      audio.compressor.threshold.value = MIC_DETECT_COMPRESSOR.threshold;
+      audio.compressor.knee.value      = MIC_DETECT_COMPRESSOR.knee;
+      audio.compressor.ratio.value     = MIC_DETECT_COMPRESSOR.ratio;
+      audio.compressor.attack.value    = MIC_DETECT_COMPRESSOR.attack;
+      audio.compressor.release.value   = MIC_DETECT_COMPRESSOR.release;
+      source.connect(audio.compressor);
+
+      audio.gainNode = audio.ctx.createGain();
+      audio.gainNode.gain.value = MIC_DETECT_MAKEUP_GAIN;
+      audio.compressor.connect(audio.gainNode).connect(audio.analyser);
+
       // 録音される音声トラックも同じコンプレッサーを通し、別ゲインで底上げする
-      // （'voice'はブラウザのAGC/ノイズ抑制済みストリームをそのまま録音する）
       audio.recGainNode = audio.ctx.createGain();
       audio.recGainNode.gain.value = MIC_RECORD_MAKEUP_GAIN;
       audio.recDestination = audio.ctx.createMediaStreamDestination();
       audio.compressor.connect(audio.recGainNode).connect(audio.recDestination);
+    } else {
+      source.connect(audio.analyser);
     }
     audio.active = true;
     updateMicBtn(true);
@@ -821,12 +819,6 @@ function setupResumeOnInteraction() {
 // ── アプリ内録画（canvas.captureStream + getUserMedia → MP4） ──────
 function getSupportedMimeType() {
   return ['video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm']
-    .find(t => MediaRecorder.isTypeSupported(t)) || '';
-}
-
-// 音声のみ録音用のMIMEタイプ（iOS Safariはaudio/mp4、Chrome系はaudio/webm）
-function getSupportedAudioMimeType() {
-  return ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm']
     .find(t => MediaRecorder.isTypeSupported(t)) || '';
 }
 
@@ -905,19 +897,16 @@ async function startRecording() {
   }
 
   try {
-    // 「音声のみ」を選ぶと映像なしで録音し、音声ファイルとして保存する
-    const audioOnly = document.querySelector('input[name=rec-format]:checked')?.value === 'audio';
+    const canvasStream    = cv.captureStream(30);
     // 'high'(収録向け)はコンプレッサー+メイクアップゲインで底上げした音声を録音する
     const audioTracks     = audio.recDestination
       ? audio.recDestination.stream.getAudioTracks()
       : audio.stream.getAudioTracks();
-    const combinedStream  = audioOnly
-      ? new MediaStream(audioTracks)
-      : new MediaStream([
-          ...cv.captureStream(30).getVideoTracks(),
-          ...audioTracks,
-        ]);
-    const mimeType = audioOnly ? getSupportedAudioMimeType() : getSupportedMimeType();
+    const combinedStream  = new MediaStream([
+      ...canvasStream.getVideoTracks(),
+      ...audioTracks,
+    ]);
+    const mimeType = getSupportedMimeType();
 
     rec.chunks       = [];
     rec.worker       = null;
@@ -935,7 +924,7 @@ async function startRecording() {
       combinedStream,
       mimeType ? { mimeType } : {}
     );
-    rec.mimeType = rec.mediaRecorder.mimeType || mimeType || (audioOnly ? 'audio/mp4' : 'video/mp4');
+    rec.mimeType = rec.mediaRecorder.mimeType || mimeType || 'video/mp4';
 
     rec.mediaRecorder.ondataavailable = e => {
       if (e.data.size === 0) return;
@@ -997,10 +986,7 @@ async function finalizeOPFSRecording(mimeType) {
 
 async function saveRecording() {
   const mimeType = rec.mimeType || rec.mediaRecorder.mimeType || 'video/mp4';
-  const isAudio  = mimeType.startsWith('audio/');
-  const ext      = mimeType.startsWith('video/mp4') ? 'mp4'
-                 : mimeType.startsWith('audio/mp4') ? 'm4a'
-                 : 'webm';
+  const ext      = mimeType.startsWith('video/mp4') ? 'mp4' : 'webm';
   const fileName = `kuchipaku-${new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-')}.${ext}`;
 
   const opfsFileName = rec.opfsFileName;
@@ -1022,7 +1008,7 @@ async function saveRecording() {
     return;
   }
 
-  if (!isAudio) reportRecordedResolution(blob);
+  reportRecordedResolution(blob);
 
   // Windows等のデスクトップ（File System Access API対応）では保存先を選択するダイアログを表示
   if (window.showSaveFilePicker) {
@@ -1030,7 +1016,7 @@ async function saveRecording() {
     try {
       const handle = await window.showSaveFilePicker({
         suggestedName: fileName,
-        types: [{ description: isAudio ? '音声ファイル' : '動画ファイル', accept: { [baseMime]: [`.${ext}`] } }],
+        types: [{ description: '動画ファイル', accept: { [baseMime]: [`.${ext}`] } }],
       });
       const writable = await handle.createWritable();
       await writable.write(blob);
@@ -1051,7 +1037,7 @@ async function saveRecording() {
     const file = new File([blob], fileName, { type: mimeType });
     try {
       if (navigator.canShare({ files: [file] })) {
-        await navigator.share({ files: [file], title: isAudio ? 'KuchiPaku 録音' : 'KuchiPaku 録画' });
+        await navigator.share({ files: [file], title: 'KuchiPaku 録画' });
         await removeOPFSFile(opfsFileName);
         return;
       }
