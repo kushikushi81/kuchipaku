@@ -286,19 +286,36 @@
         </section>
 
         <section class="sec obs-hint collapsed">
-          <p class="sec-label">OBS 連携</p>
+          <p class="sec-label">OBS 連携（同期モード・推奨）</p>
           <p class="hint-text">
-            URLに <code>?obs=1</code> を付けると、UIが非表示になり<br>
-            キャラクターのみが画面いっぱいに表示されてマイクも自動で開始されます。<br>
+            <code>start.bat</code> で起動したときは、OBSにこのブラウザの<br>
+            表示（レイアウト・画像・口パク）をそのまま同期できます。<br>
+            <br>
+            <strong>手順：</strong><br>
+            ① <code>start.bat</code> でサーバーを起動<br>
+            ② OBSのブラウザソースのURLに<br>
+            　<code>http://localhost:8000/?obs=1&amp;sync=1</code> を指定<br>
+            　（幅・高さは配信解像度に合わせる）<br>
+            ③ このブラウザ（<code>http://localhost:8000/</code>）で<br>
+            　「マイク開始」を押す<br>
+            　→ 設定変更・画像・口パクがOBS側へ即時反映されます<br>
+            <br>
+            マイクはこのブラウザ側だけで動くので、<br>
+            OBSの環境変数設定（CEFフラグ）は<strong>不要</strong>です。<br>
+            <br>
             透過出力する場合はOBSブラウザソースのカスタムCSSに<br>
             <code>body { background: transparent !important; }</code><br>
             を追加してください。<br>
+            クロマキー緑で出したい場合はURLに<br>
+            <code>&amp;bg=chroma</code> を追加します。<br>
             <br>
-            <strong>マイクが反応しない場合：</strong><br>
-            OBSの詳細設定で環境変数<br>
+            <strong>同期を使わない場合：</strong><br>
+            <code>?obs=1</code> だけを付けるとOBS側で直接マイクを<br>
+            使う従来モードになります（この場合はマイクが<br>
+            反応しないとき、OBSの環境変数<br>
             <code>OBS_BROWSER_CEF_COMMAND_LINE_ARGS</code> に<br>
             <code>--autoplay-policy=no-user-gesture-required --use-fake-ui-for-media-stream</code><br>
-            を設定し、OBSを再起動してください。
+            を設定してOBSを再起動してください）。
           </p>
         </section>
 

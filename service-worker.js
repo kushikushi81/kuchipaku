@@ -1,5 +1,5 @@
 // KuchiPaku Service Worker — PWAオフライン対応
-const CACHE = 'kuchipaku-v3';
+const CACHE = 'kuchipaku-v4';
 
 // キャッシュ優先（変化しないアセット）
 const STATIC_ASSETS = [
@@ -34,6 +34,11 @@ self.addEventListener('activate', e => {
 
 self.addEventListener('fetch', e => {
   const { pathname } = new URL(e.request.url);
+
+  // OBS同期API(/sync/)はSWの管轄外にする。
+  // SSEの無限ストリームをcache.putすると完了せずメモリを食い続け、POSTはcache.putが例外になるため
+  if (pathname.startsWith('/sync/')) return;
+
   const isStatic = STATIC_ASSETS.some(p => pathname.endsWith(p.replace('./', '/')));
 
   if (isStatic) {
