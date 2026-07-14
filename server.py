@@ -107,8 +107,10 @@ class SyncHandler(SimpleHTTPRequestHandler):
             super().do_GET()
 
     def _send_state(self):
-        with STATE_LOCK:
-            body = json.dumps(STATE, ensure_ascii=False).encode("utf-8")
+        # クライアントはres.okだけを見てフィーチャーディテクトする（本文は使わない）。
+        # 画像込みのSTATE全体（数MB）を毎回返す必要はないため、疎通確認用の
+        # 軽量なレスポンスのみ返す。実データはSSE(/sync/events)経由で送る
+        body = b'{"ok":true}'
         self.send_response(200)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Cache-Control", "no-store")

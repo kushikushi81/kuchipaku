@@ -1398,9 +1398,42 @@ function loadPreset(slot) {
   markCfgDirty();   // プリセット読込結果を自動保存＋OBSへ反映
 }
 
+function isValidCropOffsets(v) {
+  return Array.isArray(v) && v.length === 4 &&
+    v.every(o => o && typeof o.x === 'number' && typeof o.y === 'number');
+}
+
+// 壊れた/旧形式のプリセットJSON（手動編集・破損ファイル・異バージョン間の
+// 読み込みなど）でcfgがNaNや不正値に汚染されないよう、コア項目に安全な
+// デフォルトを補う
+function sanitizePresetPayload(p) {
+  if (!p || typeof p !== 'object') p = {};
+  return {
+    ...p,
+    sensRaw:     typeof p.sensRaw === 'number' && isFinite(p.sensRaw) ? p.sensRaw : 15,
+    holdMs:      typeof p.holdMs  === 'number' && isFinite(p.holdMs)  ? p.holdMs  : 150,
+    mouthMs:     typeof p.mouthMs === 'number' && isFinite(p.mouthMs) ? p.mouthMs : 120,
+    bgMode:      typeof p.bgMode  === 'string' ? p.bgMode  : 'transparent',
+    bgColor:     typeof p.bgColor === 'string' ? p.bgColor : '#222244',
+    cropOffsets: isValidCropOffsets(p.cropOffsets)
+      ? p.cropOffsets
+      : [{ x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 }],
+  };
+}
+
 // serializeCfg() 形式のオブジェクトを cfg と各UIへ反映する。
 // bgImageCrop / autoLM / charMode を持たない旧形式プリセットもそのまま受け付ける
 function applyConfig(p) {
+  p = sanitizePresetPayload(p);
+
+  // フレーム画像の再生成が必要かどうかを判定するための直前値（位置・サイズなど
+  // 描画にしか影響しない値の変更だけなら、重いフレーム再構築をスキップする）
+  const prevChromaColor     = cfg.chromaColor;
+  const prevChromaTolerance = cfg.chromaTolerance;
+  const prevCropOffsets     = JSON.stringify(cfg.cropOffsets);
+  const prevAutoLM          = JSON.stringify(autoLM);
+  const prevCharMode        = charMode;
+
   setSliderNum('sl-sens',   'n-sens',   p.sensRaw);            cfg.sensitivity     = p.sensRaw / 1000;
   setSliderNum('sl-hold',   'n-hold',   p.holdMs);             cfg.holdMs          = p.holdMs;
   setSliderNum('sl-speed',  'n-speed',  p.mouthMs);            cfg.mouthMs         = p.mouthMs;
@@ -1461,8 +1494,19 @@ function applyConfig(p) {
 
   // 従来はモードを問わず buildFrames() を呼んでいたが、frames/autoモード中に
   // プリセットを読み込むとスプライト用フレームで上書きされてしまうため、
-  // 現在のモードに合わせて再構築する
-  rebuildCurrentMode();
+  // 現在のモードに合わせて再構築する。
+  // ただしフレーム画像の内容に影響する値（クロマキー・切り取り位置・自動生成の
+  // 顔パーツ位置・モード切替）が変わっていないときは再構築しない。OBS同期受信側は
+  // キャラクター位置のドラッグなど毎回configイベントを受け取るため、無関係な
+  // 更新のたびに4フレーム分のクロマキー処理をやり直すとカクつきの原因になる
+  const modeChanged        = prevCharMode !== charMode;
+  const chromaChanged      = prevChromaColor !== cfg.chromaColor || prevChromaTolerance !== cfg.chromaTolerance;
+  const cropOffsetsChanged = prevCropOffsets !== JSON.stringify(cfg.cropOffsets);
+  const autoLMChanged      = prevAutoLM !== JSON.stringify(autoLM);
+  const needsRebuild = modeChanged || chromaChanged
+    || (charMode === 'sprite' && cropOffsetsChanged)
+    || (charMode === 'auto'   && autoLMChanged);
+  if (needsRebuild) rebuildCurrentMode();
 }
 
 function updatePresetBadge(slot) {
