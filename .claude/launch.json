@@ -4,14 +4,8 @@
     {
       "name": "kuchipaku",
       "runtimeExecutable": "python",
-      "runtimeArgs": ["-m", "http.server", "8000"],
+      "runtimeArgs": ["server.py", "8000"],
       "port": 8000
-    },
-    {
-      "name": "portfolio",
-      "runtimeExecutable": "python",
-      "runtimeArgs": ["-m", "http.server", "8777", "--directory", "portfolio"],
-      "port": 8777
     }
   ]
 }

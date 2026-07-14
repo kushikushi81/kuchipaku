@@ -176,6 +176,7 @@ let saveCropTimer = null;
 function scheduleSaveCropOffsets() {
   clearTimeout(saveCropTimer);
   saveCropTimer = setTimeout(() => dbSet('cropOffsets', cfg.cropOffsets), 500);
+  markCfgDirty();
 }
 
 // ── キャラクターモード ─────────────────────────────────────────
@@ -461,6 +462,14 @@ function scheduleRebuildCurrent() {
   rebuildTimer = setTimeout(rebuildCurrentMode, 250);
 }
 
+// そのモードの画像が揃っていて表示に使えるか
+function modeReady(mode) {
+  if (mode === 'sprite') return !!spriteImg;
+  if (mode === 'frames') return frameImages.every(f => f !== null);
+  if (mode === 'auto')   return !!autoBaseImg;
+  return false;
+}
+
 function updateAutoPreview() {
   const gen  = generateAutoFrames();
   if (!gen) return;
@@ -508,7 +517,11 @@ function setupCharModeUI() {
   document.querySelectorAll('.char-tab').forEach(tab => {
     tab.addEventListener('click', () => {
       switchCharTab(tab.dataset.tab);
-      localStorage.setItem('kp-charMode', tab.dataset.tab);
+      // 画像が揃っていれば表示も即座に切り替える（OBS受信側と挙動を揃える）。
+      // charModeの保存は markCfgDirty → kp-autosave に一本化されている
+      rebuildCurrentMode();
+      markCfgDirty();
+      scheduleSyncImages();
     });
   });
 
@@ -534,8 +547,10 @@ function setupCharModeUI() {
         updateFrameThumb(slot);
         await dbSet(`frameImage${slot}`, file);
         await dbSet(`frameImageCrop${slot}`, rect);
-        await dbSet('charMode', 'frames');
         document.getElementById('btn-frames-apply').disabled = !frameImages.every(f => f !== null);
+        // 4枚揃っていれば即適用（受信側は揃った時点で自動適用するため挙動を揃える）
+        rebuildCurrentMode();
+        scheduleSyncImages();
       });
     } catch { alert('画像の読み込みに失敗しました。'); }
     e.target.value = '';
@@ -554,6 +569,7 @@ function setupCharModeUI() {
         if (charMode === 'frames' && frameImages.every(f => f !== null)) {
           buildFramesFromImages(frameImages);
         }
+        scheduleSyncImages();
       });
     });
   });
@@ -561,6 +577,8 @@ function setupCharModeUI() {
   document.getElementById('btn-frames-apply').addEventListener('click', () => {
     if (!frameImages.every(f => f !== null)) return;
     buildFramesFromImages(frameImages);
+    markCfgDirty();
+    scheduleSyncImages();
   });
 
   // 1枚から作る
@@ -584,7 +602,9 @@ function setupCharModeUI() {
         document.getElementById('btn-auto-crop-edit').style.display = '';
         await dbSet('autoBaseImage', file);
         await dbSet('autoBaseImageCrop', rect);
-        await dbSet('charMode', 'auto');
+        // autoモード表示中なら即生成・適用（受信側は受信時に自動適用するため挙動を揃える）
+        rebuildCurrentMode();
+        scheduleSyncImages();
       });
     } catch { alert('画像の読み込みに失敗しました。'); }
     e.target.value = '';
@@ -601,6 +621,7 @@ function setupCharModeUI() {
       } else if (charMode === 'auto') {
         applyGeneratedFrames(generateAutoFrames());
       }
+      scheduleSyncImages();
     });
   });
 
@@ -616,6 +637,10 @@ function setupCharModeUI() {
       if (document.getElementById('auto-preview-grid').style.display !== 'none') {
         updateAutoPreview();
       }
+      // 受信側はconfig受信のたびに再生成するため、送信側も適用済みフレームを追従させる
+      if (charMode === 'auto') scheduleRebuildCurrent();
+      // autoLMは受信側が autoBase 画像から再生成するのでconfig（serializeCfgに含む）で伝わる
+      markCfgDirty();
     };
     sl.addEventListener('input',  () => apply(+sl.value));
     ni.addEventListener('change', () => apply(+ni.value));
@@ -632,6 +657,8 @@ function setupCharModeUI() {
     const gen = generateAutoFrames();
     if (!gen) return;
     applyGeneratedFrames(gen);
+    markCfgDirty();
+    scheduleSyncImages();
   });
 }
 
@@ -1111,15 +1138,21 @@ function getVolume() {
 
 // ── アニメーション更新 ────────────────────────────────────────
 function updateAnim(dt) {
-  const vol = getVolume();
-  lastVol = vol;
-
-  if (vol > cfg.sensitivity) {
-    anim.talking   = true;
-    anim.holdTimer = cfg.holdMs;
+  let vol = 0;
+  if (isSyncReceiver) {
+    // 受信側は音量判定せず、送信側から届いた口パク状態をそのまま使う
+    anim.talking = remoteTalking;
   } else {
-    anim.holdTimer -= dt;
-    if (anim.holdTimer <= 0) anim.talking = false;
+    vol = getVolume();
+    lastVol = vol;
+    if (vol > cfg.sensitivity) {
+      anim.talking   = true;
+      anim.holdTimer = cfg.holdMs;
+    } else {
+      anim.holdTimer -= dt;
+      if (anim.holdTimer <= 0) anim.talking = false;
+    }
+    syncTalkingIfChanged(anim.talking);
   }
 
   if (anim.talking) {
@@ -1271,7 +1304,7 @@ function linkSlider(slId, numId, applyFn) {
   const ni   = document.getElementById(numId);
   const step = +sl.step || 1;
 
-  const fromSlider = () => { ni.value = sl.value; applyFn(+sl.value); };
+  const fromSlider = () => { ni.value = sl.value; applyFn(+sl.value); markCfgDirty(); };
   const fromNum    = () => {
     let v = parseFloat(ni.value);
     if (isNaN(v)) v = +sl.min;
@@ -1279,6 +1312,7 @@ function linkSlider(slId, numId, applyFn) {
     v = Math.round(v / step) * step;
     sl.value = ni.value = v;
     applyFn(v);
+    markCfgDirty();
   };
 
   sl.addEventListener('input', fromSlider);
@@ -1314,6 +1348,7 @@ function setupCanvasMouse() {
     lastY = e.clientY;
     setSliderNum('sl-char-x', 'n-char-x', Math.round(cfg.charX));
     setSliderNum('sl-char-y', 'n-char-y', Math.round(cfg.charY));
+    markCfgDirty();
   });
 
   window.addEventListener('mouseup', () => { dragging = false; });
@@ -1323,12 +1358,14 @@ function setupCanvasMouse() {
     const scale = Math.min(200, Math.max(10, cfg.charScale - Math.sign(e.deltaY) * 5));
     cfg.charScale = scale;
     setSliderNum('sl-char-scale', 'n-char-scale', scale);
+    markCfgDirty();
   }, { passive: false });
 }
 
 // ── プリセット ────────────────────────────────────────────────
-function savePreset(slot) {
-  localStorage.setItem(`kp-preset-${slot}`, JSON.stringify({
+// cfg（+ autoLM / charMode）をプリセット・自動保存・OBS同期で共通のJSON形式に直列化する
+function serializeCfg() {
+  return {
     sensRaw:         Math.round(cfg.sensitivity * 1000),
     holdMs:          cfg.holdMs,
     mouthMs:         cfg.mouthMs,
@@ -1339,19 +1376,31 @@ function savePreset(slot) {
     aspectRatio:     cfg.aspectRatio,
     bgMode:          cfg.bgMode,
     bgColor:         cfg.bgColor,
+    bgImageCrop:     cfg.bgImageCrop ? { ...cfg.bgImageCrop } : null,
     chromaColor:     cfg.chromaColor,
     chromaTolerance: cfg.chromaTolerance,
     micQuality:      cfg.micQuality,
     cropOffsets:     cfg.cropOffsets.map(o => ({ ...o })),
-  }));
+    autoLM:          { ...autoLM },
+    charMode,
+  };
+}
+
+function savePreset(slot) {
+  localStorage.setItem(`kp-preset-${slot}`, JSON.stringify(serializeCfg()));
   updatePresetBadge(slot);
 }
 
 function loadPreset(slot) {
   const raw = localStorage.getItem(`kp-preset-${slot}`);
   if (!raw) { alert(`スロット${slot}にはまだプリセットが保存されていません。`); return; }
-  const p = JSON.parse(raw);
+  applyConfig(JSON.parse(raw));
+  markCfgDirty();   // プリセット読込結果を自動保存＋OBSへ反映
+}
 
+// serializeCfg() 形式のオブジェクトを cfg と各UIへ反映する。
+// bgImageCrop / autoLM / charMode を持たない旧形式プリセットもそのまま受け付ける
+function applyConfig(p) {
   setSliderNum('sl-sens',   'n-sens',   p.sensRaw);            cfg.sensitivity     = p.sensRaw / 1000;
   setSliderNum('sl-hold',   'n-hold',   p.holdMs);             cfg.holdMs          = p.holdMs;
   setSliderNum('sl-speed',  'n-speed',  p.mouthMs);            cfg.mouthMs         = p.mouthMs;
@@ -1365,7 +1414,7 @@ function loadPreset(slot) {
     const ar = document.querySelector(`input[name=rec-aspect][value="${p.aspectRatio}"]`);
     if (ar) ar.checked = true;
   }
-  if (!isBroadcast) resizeCanvas(cfg.charSize);
+  resizeCanvas(isBroadcast ? broadcastBase() : cfg.charSize);
 
   setSliderNum('sl-char-x',     'n-char-x',     p.charX     ?? 50);  cfg.charX     = p.charX     ?? 50;
   setSliderNum('sl-char-y',     'n-char-y',     p.charY     ?? 50);  cfg.charY     = p.charY     ?? 50;
@@ -1396,7 +1445,22 @@ function loadPreset(slot) {
     if (audio.active) { stopMic(); startMic(); }
   }
 
-  buildFrames();
+  if (p.bgImageCrop) cfg.bgImageCrop = { ...p.bgImageCrop };
+
+  if (p.autoLM) {
+    Object.assign(autoLM, p.autoLM);
+    setSliderNum('sl-mouth-y',    'n-mouth-y',    autoLM.mouthY);
+    setSliderNum('sl-eye-y',      'n-eye-y',      autoLM.eyeY);
+    setSliderNum('sl-mouth-size', 'n-mouth-size', autoLM.mouthSize);
+  }
+
+  // 画像が揃っていないモードへは切り替えない（タブ表示と描画の食い違いを防ぐ）
+  if (p.charMode && p.charMode !== charMode && modeReady(p.charMode)) switchCharTab(p.charMode);
+
+  // 従来はモードを問わず buildFrames() を呼んでいたが、frames/autoモード中に
+  // プリセットを読み込むとスプライト用フレームで上書きされてしまうため、
+  // 現在のモードに合わせて再構築する
+  rebuildCurrentMode();
 }
 
 function updatePresetBadge(slot) {
@@ -1526,6 +1590,7 @@ function setupUI() {
         stopMic();
         startMic();
       }
+      markCfgDirty();
     });
   });
 
@@ -1537,6 +1602,7 @@ function setupUI() {
     radio.addEventListener('change', () => {
       cfg.charSize = +radio.value;
       if (!isBroadcast) resizeCanvas(cfg.charSize);
+      markCfgDirty();
     });
   });
 
@@ -1549,6 +1615,7 @@ function setupUI() {
       if (cfg.bgImage) {
         cfg.bgImageCrop = defaultCropRect(cfg.bgImage.width, cfg.bgImage.height, cv.width / cv.height);
       }
+      markCfgDirty();
     });
   });
 
@@ -1561,6 +1628,7 @@ function setupUI() {
     setSliderNum('sl-char-x',     'n-char-x',     50);
     setSliderNum('sl-char-y',     'n-char-y',     50);
     setSliderNum('sl-char-scale', 'n-char-scale', 100);
+    markCfgDirty();
   });
   setupCanvasMouse();
 
@@ -1570,9 +1638,10 @@ function setupUI() {
       cfg.bgMode = radio.value;
       document.getElementById('row-color').classList.toggle('hidden', radio.value !== 'color');
       document.getElementById('row-image').classList.toggle('hidden', radio.value !== 'image');
+      markCfgDirty();
     });
   });
-  document.getElementById('bg-color').addEventListener('input', e => { cfg.bgColor = e.target.value; });
+  document.getElementById('bg-color').addEventListener('input', e => { cfg.bgColor = e.target.value; markCfgDirty(); });
 
   // 背景画像
   document.getElementById('btn-img').addEventListener('click', () => document.getElementById('file-img').click());
@@ -1589,6 +1658,8 @@ function setupUI() {
         cfg.bgImageCrop = rect;
         document.getElementById('img-name').textContent = file.name;
         document.getElementById('btn-bg-crop-edit').style.display = '';
+        markCfgDirty();
+        scheduleSyncImages();
       });
     };
     img.src = bgUrl;
@@ -1599,6 +1670,7 @@ function setupUI() {
     const ratio = cv.width / cv.height;
     openCropModal(cfg.bgImage, ratio, cfg.bgImageCrop, rect => {
       cfg.bgImageCrop = rect;
+      markCfgDirty();
     });
   });
 
@@ -1620,6 +1692,7 @@ function setupUI() {
       document.getElementById('char-img-name').textContent = file.name;
       await dbSet('charImage', file);
       await dbSet('charImageName', file.name);
+      scheduleSyncImages();
     } catch {
       alert('画像の読み込みに失敗しました。\n2×2スプライトシート形式の画像を選択してください。');
     } finally {
@@ -1632,6 +1705,8 @@ function setupUI() {
   document.getElementById('chroma-color').addEventListener('change', e => {
     cfg.chromaColor = e.target.value;
     rebuildCurrentMode();
+    // 受信側は元画像＋config.chromaColorでrebuildCurrentModeが再適用するので画像再送は不要
+    markCfgDirty();
   });
 
   linkSlider('sl-chroma', 'n-chroma', v => {
@@ -1670,16 +1745,165 @@ function setupUI() {
   // OBS URLパラメータ
   const params = new URLSearchParams(location.search);
   if (params.get('obs') === '1') {
-    const bg = params.get('bg') || 'transparent';
+    const bgParam = params.get('bg');
+    obsBgOverride = bgParam;                 // 指定があれば受信configより優先（無指定なら送信側に追従）
+    const bg = bgParam || 'transparent';
     cfg.bgMode = bg;
     const r = document.querySelector(`input[name=bg][value="${bg}"]`);
     if (r) r.checked = true;
     document.getElementById('row-color').classList.toggle('hidden', bg !== 'color');
     document.getElementById('row-image').classList.toggle('hidden', bg !== 'image');
     setTimeout(() => setBroadcast(true), 0);
-    // OBSブラウザソースには#btn-micが表示されないため自動でマイクを開始する
-    startMic();
+    // sync受信モードはマイクを使わず送信側の口パク状態を受け取る。
+    // ?obs=1 単独（iPhone画面収録など）は従来どおり自前マイクを自動開始する
+    if (!isSyncMode) startMic();
   }
+}
+
+// ── OBS同期 ───────────────────────────────────────────────────
+// コントロールページ（通常UI = 送信側）の設定・画像・口パク状態を、
+// ローカルの server.py 経由でOBSブラウザソース（?obs=1&sync=1 = 受信側）へ配信する。
+// server.py が無い環境（静的ホスティング等）では /sync/state が失敗して静かに無効化される。
+const isSyncMode     = new URLSearchParams(location.search).get('sync') === '1';
+const isSyncReceiver = isObsMode && isSyncMode;   // OBS受信ページ
+let   syncEnabled    = false;   // /sync/state が応答したときだけ true
+let   remoteTalking  = false;   // 受信側: サーバーから受け取った口パク状態
+let   obsBgOverride  = null;    // ?obs=1 の bg 指定（指定時は受信configより優先）
+let   bootRestored   = false;   // finishBootで復元完了するまで自動保存・送信を抑止
+
+function syncPost(path, obj) {
+  if (!syncEnabled) return;
+  fetch(path, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify(obj),
+  }).catch(() => {});
+}
+
+// 全cfg変更の単一入口。デバウンスして自動保存＋OBSへ送信する
+let cfgDirtyTimer = null;
+function markCfgDirty() {
+  if (isObsMode || !bootRestored) return;   // 受信ページ・復元前は何もしない
+  clearTimeout(cfgDirtyTimer);
+  cfgDirtyTimer = setTimeout(() => {
+    const p = serializeCfg();
+    try { localStorage.setItem('kp-autosave', JSON.stringify(p)); } catch {}
+    syncPost('/sync/config', p);
+  }, 300);
+}
+
+// Image / canvas を image/png のdataURLへ変換
+function toPngDataURL(src) {
+  if (!src) return null;
+  const w = src.naturalWidth || src.width;
+  const h = src.naturalHeight || src.height;
+  if (!w || !h) return null;
+  const oc = document.createElement('canvas');
+  oc.width = w; oc.height = h;
+  oc.getContext('2d').drawImage(src, 0, 0, w, h);
+  return oc.toDataURL('image/png');
+}
+
+// 全モードの画像を1つのペイロードにまとめる（クロップ適用済み。未設定はnull）
+function buildImagesPayload() {
+  return {
+    charMode,
+    images: {
+      sprite:   toPngDataURL(spriteImg),
+      frames:   frameImages.every(f => f) ? frameImages.map(toPngDataURL) : null,
+      autoBase: toPngDataURL(autoBaseImg),
+      bg:       toPngDataURL(cfg.bgImage),
+    },
+  };
+}
+
+let imgSyncTimer = null;
+function scheduleSyncImages() {
+  if (isObsMode || !syncEnabled) return;
+  clearTimeout(imgSyncTimer);
+  imgSyncTimer = setTimeout(() => syncPost('/sync/images', buildImagesPayload()), 500);
+}
+
+let lastSentTalking = null;
+function syncTalkingIfChanged(t) {
+  if (isObsMode || !syncEnabled || t === lastSentTalking) return;
+  lastSentTalking = t;
+  syncPost('/sync/talking', { talking: t });
+}
+
+function loadImageFromUrl(url) {
+  return new Promise((res, rej) => {
+    const img = new Image();
+    img.onload  = () => res(img);
+    img.onerror = () => rej(new Error('画像読み込み失敗'));
+    img.src = url;
+  });
+}
+
+function safeParse(s) { try { return JSON.parse(s); } catch { return null; } }
+
+async function initSync() {
+  try {
+    const res = await fetch('/sync/state', { cache: 'no-store' });
+    syncEnabled = res.ok;
+  } catch {
+    syncEnabled = false;
+  }
+
+  if (isSyncReceiver) {
+    if (syncEnabled) connectSyncEvents();
+    else             startMic();   // サーバー不在時は従来どおり自前マイクにフォールバック
+    return;
+  }
+
+  if (isObsMode) return;           // ?obs=1 単独ページは送信しない（iPhone用途を維持）
+
+  // 送信側: 復元済みの現在状態をサーバーへ初回プッシュ（OBS先行起動でも最新を表示できるように）
+  if (syncEnabled) {
+    syncPost('/sync/config', serializeCfg());
+    syncPost('/sync/images', buildImagesPayload());
+    syncPost('/sync/talking', { talking: false });
+  }
+}
+
+function connectSyncEvents() {
+  // 切断時は EventSource が retry:2000 で自動再接続し、サーバーが再度スナップショットを送る
+  const es = new EventSource('/sync/events');
+  es.addEventListener('config',  e => applyRemoteConfig(safeParse(e.data)));
+  es.addEventListener('images',  e => applyRemoteImages(safeParse(e.data)));
+  es.addEventListener('talking', e => { const d = safeParse(e.data); if (d) remoteTalking = !!d.talking; });
+}
+
+function applyRemoteConfig(p) {
+  if (!p) return;
+  applyConfig(p);
+  // ?bg= が指定されていればそれを優先（iPhone用のchroma等）。無指定なら送信側のbgModeに追従
+  if (obsBgOverride) cfg.bgMode = obsBgOverride;
+}
+
+async function applyRemoteImages(payload) {
+  if (!payload || !payload.images) return;
+  const im = payload.images;
+  try {
+    if (im.sprite)   spriteImg   = await loadImageFromUrl(im.sprite);
+    if (im.frames)   for (let i = 0; i < 4; i++) frameImages[i] = await loadImageFromUrl(im.frames[i]);
+    if (im.autoBase) autoBaseImg = await loadImageFromUrl(im.autoBase);
+    if (im.bg)       cfg.bgImage = await loadImageFromUrl(im.bg);
+  } catch { /* 一部欠損でも描画は継続 */ }
+  if (payload.charMode && modeReady(payload.charMode)) switchCharTab(payload.charMode);
+  rebuildCurrentMode();
+}
+
+// 起動処理の締め（boot内の各分岐から呼ぶ）
+function finishBoot() {
+  // 送信側のみ: 前回終了時の設定を復元（画像復元の後に行うことが重要）
+  if (!isObsMode) {
+    const raw = localStorage.getItem('kp-autosave');
+    if (raw) { try { applyConfig(JSON.parse(raw)); } catch {} }
+  }
+  bootRestored = true;
+  requestAnimationFrame(loop);
+  initSync();
 }
 
 // ── PWA ──────────────────────────────────────────────────────
@@ -1688,6 +1912,70 @@ if ('serviceWorker' in navigator) {
 }
 
 // ── 起動 ──────────────────────────────────────────────────────
+// スプライトシート画像を復元する（保存が無ければ同梱のcharacter.png）
+async function restoreSpriteImages() {
+  try {
+    const savedFile = await dbGet('charImage');
+    if (savedFile) {
+      const savedUrl = URL.createObjectURL(savedFile);
+      await loadSpriteFromUrl(savedUrl);
+      URL.revokeObjectURL(savedUrl);
+      const name = await dbGet('charImageName');
+      if (name) document.getElementById('char-img-name').textContent = name;
+      return true;
+    }
+  } catch { /* 保存画像が壊れていたら同梱画像へ */ }
+  try {
+    await loadSpriteFromUrl('character.png');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// 4枚バラ画像を復元する。保存済みのスロットはサムネイルまで復元し、
+// 4枚すべて揃っているときのみ true（モードとして使用可能）を返す
+async function restoreFrameImages() {
+  try {
+    const files = await Promise.all([0, 1, 2, 3].map(i => dbGet(`frameImage${i}`)));
+    const crops = await Promise.all([0, 1, 2, 3].map(i => dbGet(`frameImageCrop${i}`)));
+    for (let i = 0; i < 4; i++) {
+      if (!files[i]) continue;
+      const img  = await loadImageFromFile(files[i]);
+      const rect = crops[i] || defaultCropRect(img.width, img.height, 1);
+      frameImagesOrig[i] = img;
+      frameImageCrops[i] = rect;
+      frameImages[i]     = applyCropToCanvas(img, rect);
+      updateFrameThumb(i);
+    }
+    const ok = frameImages.every(f => f !== null);
+    document.getElementById('btn-frames-apply').disabled = !ok;
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
+// 「1枚から作る」の元画像を復元する
+async function restoreAutoImages() {
+  try {
+    const file = await dbGet('autoBaseImage');
+    if (!file) return false;
+    const img  = await loadImageFromFile(file);
+    const rect = await dbGet('autoBaseImageCrop') || defaultCropRect(img.width, img.height, 1);
+    autoBaseOrigImg = img;
+    autoBaseImgCrop = rect;
+    autoBaseImg     = applyCropToCanvas(img, rect);
+    document.getElementById('auto-img-name').textContent        = file.name;
+    document.getElementById('btn-auto-generate').disabled       = false;
+    document.getElementById('auto-landmark-area').style.display = '';
+    document.getElementById('btn-auto-crop-edit').style.display = '';
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function boot() {
   initCanvas();
   setupUI();
@@ -1701,73 +1989,32 @@ async function boot() {
     refreshCropUI();
   }
 
-  const savedMode = await dbGet('charMode') || localStorage.getItem('kp-charMode') || 'sprite';
+  // 全モードの保存済み画像を復元する。選択中モード以外も読み込んでおくことで、
+  // タブ切替やプリセット読込で即座に表示を切り替えられる
+  const ready = {
+    sprite: await restoreSpriteImages(),
+    frames: await restoreFrameImages(),
+    auto:   await restoreAutoImages(),
+  };
 
-  if (savedMode === 'frames') {
-    try {
-      const files = await Promise.all([0, 1, 2, 3].map(i => dbGet(`frameImage${i}`)));
-      if (files.every(f => f !== null)) {
-        const imgs  = await Promise.all(files.map(f => loadImageFromFile(f)));
-        const crops = await Promise.all([0, 1, 2, 3].map(i => dbGet(`frameImageCrop${i}`)));
-        imgs.forEach((img, i) => {
-          frameImagesOrig[i] = img;
-          const rect = crops[i] || defaultCropRect(img.width, img.height, 1);
-          frameImageCrops[i] = rect;
-          frameImages[i]     = applyCropToCanvas(img, rect);
-          updateFrameThumb(i);
-        });
-        document.getElementById('btn-frames-apply').disabled = false;
-        buildFramesFromImages(frameImages);
-        switchCharTab('frames');
-        requestAnimationFrame(loop);
-        return;
-      }
-    } catch { /* fallthrough to default */ }
+  // charMode は自動保存(kp-autosave)を唯一の保存先とする。
+  // 旧バージョンが保存した IndexedDB / kp-charMode からも移行読み込みする
+  const autosave = safeParse(localStorage.getItem('kp-autosave'));
+  let mode = (autosave && autosave.charMode)
+          || await dbGet('charMode')
+          || localStorage.getItem('kp-charMode')
+          || 'sprite';
+
+  // 画像が揃っていないモードだったときは、使えるモードへフォールバック
+  if (!ready[mode]) mode = ['sprite', 'frames', 'auto'].find(m => ready[m]);
+  if (!mode) {
+    alert('character.png の読み込みに失敗しました。\nindex.html と同じフォルダにあるか確認してください。');
+    return;
   }
 
-  if (savedMode === 'auto') {
-    try {
-      const file = await dbGet('autoBaseImage');
-      if (file) {
-        const img  = await loadImageFromFile(file);
-        const rect = await dbGet('autoBaseImageCrop') || defaultCropRect(img.width, img.height, 1);
-        autoBaseOrigImg = img;
-        autoBaseImgCrop = rect;
-        autoBaseImg     = applyCropToCanvas(img, rect);
-        document.getElementById('auto-img-name').textContent       = file.name;
-        document.getElementById('btn-auto-generate').disabled      = false;
-        document.getElementById('auto-landmark-area').style.display = '';
-        document.getElementById('btn-auto-crop-edit').style.display = '';
-        applyGeneratedFrames(generateAutoFrames());
-        switchCharTab('auto');
-        requestAnimationFrame(loop);
-        return;
-      }
-    } catch { /* fallthrough to default */ }
-  }
-
-  // デフォルト: スプライトシートモード
-  try {
-    const savedFile = await dbGet('charImage');
-    if (savedFile) {
-      const savedUrl = URL.createObjectURL(savedFile);
-      await loadSpriteFromUrl(savedUrl);
-      URL.revokeObjectURL(savedUrl);
-      const name = await dbGet('charImageName');
-      if (name) document.getElementById('char-img-name').textContent = name;
-    } else {
-      await loadSpriteFromUrl('character.png');
-    }
-  } catch {
-    try {
-      await loadSpriteFromUrl('character.png');
-    } catch {
-      alert('character.png の読み込みに失敗しました。\nindex.html と同じフォルダにあるか確認してください。');
-      return;
-    }
-  }
-
-  requestAnimationFrame(loop);
+  switchCharTab(mode);
+  rebuildCurrentMode();
+  finishBoot();
 }
 
 document.addEventListener('DOMContentLoaded', boot);
