@@ -55,6 +55,63 @@ let audioBuf = null;
 let micDebugMsg = '未開始';
 let lastVol = 0;
 
+// ── ノイズフロア追跡 ──────────────────────────────────────────
+// BraveのWeb Audioフィンガープリント対策ノイズやマイクの残留ノイズなど、
+// 無音時に混入する定常ノイズを吸収するため、直近数秒の最小音量をノイズフロア
+// として追跡し、口パク判定を「フロア + 感度」との比較にする。
+// ノイズが無い環境（Chrome等）ではフロアが0のままになり、従来の
+// 「感度のみ」判定と完全に同じ挙動になる
+const NOISE_FLOOR_WINDOW_MS = 4000;  // 最小値を観測する窓の長さ
+const NOISE_FLOOR_BUCKET_MS = 500;   // 窓を構成するバケット幅
+const NOISE_FLOOR_MAX       = 0.05;  // フロア上限（大音量環境で口が開かなくなる暴走の防止）
+const NOISE_FLOOR_CALIB_MS  = 3000;  // マイク開始直後は発話中でもフロアを学習する期間
+const NOISE_FLOOR_STUCK_MS  = 8000;  // これを超えて鳴り続ける音は定常ノイズとみなし学習を再開
+const noiseFloor = { buckets: [], current: Infinity, elapsed: 0, value: 0, calibMs: 0, aboveMs: 0 };
+
+// マイク開始時に呼ぶ（前回のマイク/環境のフロアを引き継がない）
+function resetNoiseFloor() {
+  noiseFloor.buckets = [];
+  noiseFloor.current = Infinity;
+  noiseFloor.elapsed = 0;
+  noiseFloor.value   = 0;
+  noiseFloor.calibMs = 0;
+  noiseFloor.aboveMs = 0;
+}
+
+function updateNoiseFloor(vol, dt) {
+  const threshold = noiseFloor.value + cfg.sensitivity;
+  noiseFloor.calibMs += dt;
+  noiseFloor.aboveMs = vol > threshold ? noiseFloor.aboveMs + dt : 0;
+
+  // 発話中（しきい値超え中）はフロアを凍結する。伸ばし声や歌の持続音で
+  // フロアが発話音量まで吊り上がり、口が閉じてしまうのを防ぐため。
+  // 例外1: マイク開始直後の学習期間（Brave等のノイズを即座に習得する）
+  // 例外2: 長時間鳴り続けている音（ほぼ確実に定常ノイズ。学習を再開しないと
+  //         ノイズ急増時に口が開きっぱなしのまま固まってしまう）
+  // なお vol が正確に0のフレームはアナライザーにまだ音声が届いていない
+  // デジタル無音（マイク開始直後など）なので学習しない。実マイクのノイズは
+  // 0にならないため、これを含めるとフロアが誤って0に固定される
+  const feed = vol > 0 && (
+    vol <= threshold
+    || noiseFloor.calibMs <= NOISE_FLOOR_CALIB_MS
+    || noiseFloor.aboveMs > NOISE_FLOOR_STUCK_MS);
+  if (feed) {
+    noiseFloor.current = Math.min(noiseFloor.current, vol);
+    noiseFloor.elapsed += dt;
+    if (noiseFloor.elapsed >= NOISE_FLOOR_BUCKET_MS) {
+      noiseFloor.buckets.push(noiseFloor.current);
+      if (noiseFloor.buckets.length > NOISE_FLOOR_WINDOW_MS / NOISE_FLOOR_BUCKET_MS) {
+        noiseFloor.buckets.shift();
+      }
+      noiseFloor.current = Infinity;
+      noiseFloor.elapsed = 0;
+    }
+    const winMin = Math.min(noiseFloor.current, ...noiseFloor.buckets);
+    noiseFloor.value = Math.min(isFinite(winMin) ? winMin : 0, NOISE_FLOOR_MAX);
+  }
+  return noiseFloor.value;
+}
+
 // ── 録画状態 ──────────────────────────────────────────────────
 const rec = {
   mediaRecorder: null,
@@ -806,6 +863,7 @@ async function startMic() {
       audio.compressor.connect(audio.recGainNode).connect(audio.recDestination);
     }
     audio.active = true;
+    resetNoiseFloor();   // 前回のマイク/環境のフロアを引き継がない
     updateMicBtn(true);
     micDebugMsg = `OK (ctx:${audio.ctx.state})`;
   } catch (err) {
@@ -1181,7 +1239,9 @@ function updateAnim(dt) {
   } else {
     vol = getVolume();
     lastVol = vol;
-    if (vol > cfg.sensitivity) {
+    // 定常ノイズ分をしきい値に上乗せする（ノイズが無ければフロアは0で従来と同じ）
+    const floor = updateNoiseFloor(vol, dt);
+    if (vol > floor + cfg.sensitivity) {
       anim.talking   = true;
       anim.holdTimer = cfg.holdMs;
     } else {
@@ -1271,7 +1331,7 @@ function drawDebugOverlay() {
   const lines = [
     `mic.active: ${audio.active}`,
     `ctx.state: ${audio.ctx ? audio.ctx.state : 'null'}`,
-    `vol: ${lastVol.toFixed(3)} (sensitivity: ${cfg.sensitivity})`,
+    `vol: ${lastVol.toFixed(3)} / floor: ${noiseFloor.value.toFixed(3)} (sensitivity: ${cfg.sensitivity})`,
     `status: ${micDebugMsg}`,
   ];
   cx.font = '14px monospace';
