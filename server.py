@@ -180,6 +180,18 @@ class SyncHandler(SimpleHTTPRequestHandler):
             if key == "talking":
                 STATE["talking"] = bool(data.get("talking"))
                 payload = json.dumps({"talking": STATE["talking"]})
+            elif key == "images":
+                # 送信側が起動直後で一部の画像を未ロードのとき、その項目をnullで
+                # 送ってくることがある。nullで上書きすると既存の保存画像が消えて
+                # しまうため、項目ごとに非null値だけをマージする
+                old_sub = (STATE.get("images") or {}).get("images") or {}
+                incoming_sub = data.get("images") or {}
+                merged_sub = dict(old_sub)
+                for k, v in incoming_sub.items():
+                    if v is not None:
+                        merged_sub[k] = v
+                STATE["images"] = {"charMode": data.get("charMode"), "images": merged_sub}
+                payload = json.dumps(STATE["images"], separators=(",", ":"))
             else:
                 STATE[key] = data
                 payload = json.dumps(data, separators=(",", ":"))

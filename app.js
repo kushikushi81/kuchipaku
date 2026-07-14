@@ -1653,11 +1653,13 @@ function setupUI() {
     img.onload = () => {
       URL.revokeObjectURL(bgUrl);
       const ratio = cv.width / cv.height;
-      openCropModal(img, ratio, null, rect => {
+      openCropModal(img, ratio, null, async rect => {
         cfg.bgImage     = img;
         cfg.bgImageCrop = rect;
         document.getElementById('img-name').textContent = file.name;
         document.getElementById('btn-bg-crop-edit').style.display = '';
+        await dbSet('bgImage', file);
+        await dbSet('bgImageName', file.name);
         markCfgDirty();
         scheduleSyncImages();
       });
@@ -1956,6 +1958,19 @@ async function restoreFrameImages() {
   }
 }
 
+// 背景画像を復元する
+async function restoreBgImage() {
+  try {
+    const file = await dbGet('bgImage');
+    if (!file) return;
+    const img = await loadImageFromFile(file);
+    cfg.bgImage = img;
+    const name = await dbGet('bgImageName');
+    document.getElementById('img-name').textContent = name || '';
+    document.getElementById('btn-bg-crop-edit').style.display = '';
+  } catch { /* 復元失敗時は背景画像なしのまま続行 */ }
+}
+
 // 「1枚から作る」の元画像を復元する
 async function restoreAutoImages() {
   try {
@@ -1996,6 +2011,7 @@ async function boot() {
     frames: await restoreFrameImages(),
     auto:   await restoreAutoImages(),
   };
+  await restoreBgImage();
 
   // charMode は自動保存(kp-autosave)を唯一の保存先とする。
   // 旧バージョンが保存した IndexedDB / kp-charMode からも移行読み込みする
