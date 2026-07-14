@@ -1404,16 +1404,17 @@ function applyConfig(p) {
   setSliderNum('sl-sens',   'n-sens',   p.sensRaw);            cfg.sensitivity     = p.sensRaw / 1000;
   setSliderNum('sl-hold',   'n-hold',   p.holdMs);             cfg.holdMs          = p.holdMs;
   setSliderNum('sl-speed',  'n-speed',  p.mouthMs);            cfg.mouthMs         = p.mouthMs;
-  cfg.charSize = [720, 1080].includes(p.charSize) ? p.charSize : 1080;
+  // 録画中はcanvasサイズを変えない（captureStreamのフレームサイズが変化し録画が壊れる恐れがあるため）
+  if (!rec.active) {
+    cfg.charSize = [720, 1080].includes(p.charSize) ? p.charSize : 1080;
+    if (p.aspectRatio) cfg.aspectRatio = p.aspectRatio;
+  }
   const resRadio = document.querySelector(`input[name=resolution][value="${cfg.charSize}"]`);
   if (resRadio) resRadio.checked = true;
   setSliderNum('sl-chroma', 'n-chroma', p.chromaTolerance ?? 80); cfg.chromaTolerance = p.chromaTolerance ?? 80;
 
-  if (p.aspectRatio) {
-    cfg.aspectRatio = p.aspectRatio;
-    const ar = document.querySelector(`input[name=rec-aspect][value="${p.aspectRatio}"]`);
-    if (ar) ar.checked = true;
-  }
+  const ar = document.querySelector(`input[name=rec-aspect][value="${cfg.aspectRatio}"]`);
+  if (ar) ar.checked = true;
   resizeCanvas(isBroadcast ? broadcastBase() : cfg.charSize);
 
   setSliderNum('sl-char-x',     'n-char-x',     p.charX     ?? 50);  cfg.charX     = p.charX     ?? 50;
@@ -1438,7 +1439,8 @@ function applyConfig(p) {
     refreshCropUI();
   }
 
-  if (p.micQuality) {
+  // 録画中はマイク音質を変更しない（録画中の音声トラックが途切れるため）
+  if (p.micQuality && !rec.active) {
     cfg.micQuality = p.micQuality;
     const mq = document.querySelector(`input[name=mic-quality][value="${p.micQuality}"]`);
     if (mq) mq.checked = true;
@@ -1580,11 +1582,22 @@ function setupUI() {
 
   // マイク
   document.getElementById('btn-mic').addEventListener('click', () => {
+    if (audio.active && rec.active) {
+      alert('録画中はマイクを停止できません。\n先に録画を停止してください。');
+      return;
+    }
     audio.active ? stopMic() : startMic();
   });
 
   document.querySelectorAll('input[name=mic-quality]').forEach(radio => {
     radio.addEventListener('change', () => {
+      if (rec.active) {
+        // 録画中に音質を切り替えるとマイクトラックが再生成され、録画中の音声が途切れる
+        const current = document.querySelector(`input[name=mic-quality][value="${cfg.micQuality}"]`);
+        if (current) current.checked = true;
+        alert('録画中はマイク音質を変更できません。\n先に録画を停止してください。');
+        return;
+      }
       cfg.micQuality = radio.value;
       if (audio.active) {
         stopMic();
@@ -1600,6 +1613,13 @@ function setupUI() {
   linkSlider('sl-speed',  'n-speed',  v => { cfg.mouthMs     = v; });
   document.querySelectorAll('input[name=resolution]').forEach(radio => {
     radio.addEventListener('change', () => {
+      if (rec.active) {
+        // 録画中にcanvasサイズを変えるとcaptureStreamのフレームサイズが変化し、録画が壊れる恐れがある
+        const current = document.querySelector(`input[name=resolution][value="${cfg.charSize}"]`);
+        if (current) current.checked = true;
+        alert('録画中は解像度を変更できません。\n先に録画を停止してください。');
+        return;
+      }
       cfg.charSize = +radio.value;
       if (!isBroadcast) resizeCanvas(cfg.charSize);
       markCfgDirty();
@@ -1609,6 +1629,12 @@ function setupUI() {
   // アスペクト比
   document.querySelectorAll('input[name=rec-aspect]').forEach(radio => {
     radio.addEventListener('change', () => {
+      if (rec.active) {
+        const current = document.querySelector(`input[name=rec-aspect][value="${cfg.aspectRatio}"]`);
+        if (current) current.checked = true;
+        alert('録画中は比率を変更できません。\n先に録画を停止してください。');
+        return;
+      }
       cfg.aspectRatio = radio.value;
       resizeCanvas(isBroadcast ? broadcastBase() : cfg.charSize);
       // 画面比率が変わると背景画像のクロップ範囲が合わなくなるため、新しい比率に合わせて再設定
