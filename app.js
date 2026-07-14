@@ -2173,8 +2173,11 @@ function setupObsWsUI() {
     else doConnect();
   });
 
-  url.addEventListener('change',  () => { obsWs.url = url.value.trim(); saveObsWsSettings(); });
-  pass.addEventListener('change', () => { obsWs.password = pass.value; saveObsWsSettings(); });
+  // URL/パスワード変更時、有効化されていれば入力し直した内容で再接続する。
+  // （チェックON時点でOBS未起動/パスワード未入力だった場合、そのまま失敗状態に
+  // 固定されて「後から直しても繋がらない」ままになるのを防ぐ）
+  url.addEventListener('change',  () => { obsWs.url = url.value.trim(); saveObsWsSettings(); if (obsWs.enabled) doConnect(); });
+  pass.addEventListener('change', () => { obsWs.password = pass.value; saveObsWsSettings(); if (obsWs.enabled) doConnect(); });
   sel.addEventListener('change',  () => { obsWs.inputName = sel.value; saveObsWsSettings(); });
 
   // 有効状態で起動したときは自動接続する
