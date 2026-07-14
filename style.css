@@ -255,6 +255,38 @@ body.with-ui #checker-wrap {
   color: var(--muted);
 }
 
+/* ── Text / select input（OBS音声連携など） ─────────────── */
+.text-input {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 6px;
+  background: var(--border);
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 12px;
+}
+.text-input:focus {
+  outline: 1.5px solid var(--accent);
+  border-color: var(--accent);
+}
+
+.obsws-toggle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  cursor: pointer;
+  margin-bottom: 6px;
+}
+.obsws-toggle input[type=checkbox] { accent-color: var(--accent); }
+
+.obsws-status { flex: 1; }
+.obsws-status.obsws-connected    { color: #46c46a; }
+.obsws-status.obsws-connecting   { color: var(--muted); }
+.obsws-status.obsws-error        { color: #e0645a; }
+.obsws-status.obsws-disconnected { color: var(--muted); }
+
 .char-img-name {
   font-size: 11px;
   color: var(--muted);

@@ -231,6 +231,37 @@
         </section>
 
         <section class="sec collapsed">
+          <p class="sec-label">OBS音声で口パク</p>
+          <label class="obsws-toggle">
+            <input type="checkbox" id="obsws-enable">
+            OBSに入力された音声で口パクする
+          </label>
+          <p class="hint-text">
+            OBSの「ツール → WebSocketサーバー設定」でサーバーを有効にし、
+            下にポートとパスワードを入力して接続してください。
+            接続後、反応させる音声ソースを選べます（「すべて」で全ソース合算）。<br>
+            ※このブラウザは <code>http://localhost:8000/</code> で開いてください
+            （パスワード認証に必要）。
+          </p>
+          <div class="row">
+            <span class="lbl">URL</span>
+            <input type="text" id="obsws-url" class="text-input" value="ws://127.0.0.1:4455">
+          </div>
+          <div class="row">
+            <span class="lbl">パスワード</span>
+            <input type="password" id="obsws-pass" class="text-input" autocomplete="off" placeholder="OBSのWebSocketパスワード">
+          </div>
+          <div class="row">
+            <span class="lbl">音声ソース</span>
+            <select id="obsws-input" class="text-input"><option value="">すべての音声ソース</option></select>
+          </div>
+          <div class="row">
+            <button id="obsws-connect" class="btn secondary sm">接続</button>
+            <span id="obsws-status" class="hint-text obsws-status obsws-disconnected">未接続</span>
+          </div>
+        </section>
+
+        <section class="sec collapsed">
           <p class="sec-label">口パク</p>
           <div class="row">
             <span class="lbl">速度</span>
@@ -308,6 +339,11 @@
             マイクはこのブラウザ側だけで動くので、<br>
             OBSの環境変数設定（CEFフラグ）は<strong>不要</strong>です。<br>
             <br>
+            <strong>OBSに入力された音声で口パクさせたい場合：</strong><br>
+            上の「OBS音声で口パク」で、OBSのWebSocketサーバーに<br>
+            接続すると、マイクの代わりにOBSミキサーの音声<br>
+            （マイク・デスクトップ音声など）で口パクします。<br>
+            <br>
             透過出力する場合はOBSブラウザソースのカスタムCSSに<br>
             <code>body { background: transparent !important; }</code><br>
             を追加してください。<br>
@@ -368,6 +404,7 @@
     </div>
   </div>
 
+  <script src="obs-ws.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

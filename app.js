@@ -33,6 +33,30 @@ const cfg = {
   ],
 };
 
+// ── OBS音声（obs-websocket）連携設定 ─────────────────────────
+// OBSのミキサー音声で口パクさせるための接続設定。パスワードを含むため
+// 同期サーバー(server.py)には送らず、この端末のlocalStorageにのみ保存する。
+const obsWs = {
+  enabled:   false,
+  url:       'ws://127.0.0.1:4455',
+  password:  '',
+  inputName: '',   // 空 = すべての音声ソースの合算（最大レベル）
+};
+
+function loadObsWsSettings() {
+  const raw = safeParse(localStorage.getItem('kp-obsws'));
+  if (raw && typeof raw === 'object') {
+    if (typeof raw.enabled   === 'boolean') obsWs.enabled   = raw.enabled;
+    if (typeof raw.url       === 'string')  obsWs.url       = raw.url;
+    if (typeof raw.password  === 'string')  obsWs.password  = raw.password;
+    if (typeof raw.inputName === 'string')  obsWs.inputName = raw.inputName;
+  }
+}
+
+function saveObsWsSettings() {
+  try { localStorage.setItem('kp-obsws', JSON.stringify(obsWs)); } catch {}
+}
+
 // ── 音声状態 ──────────────────────────────────────────────────
 const audio = {
   ctx:            null,
@@ -1237,7 +1261,11 @@ function updateAnim(dt) {
     // 受信側は音量判定せず、送信側から届いた口パク状態をそのまま使う
     anim.talking = remoteTalking;
   } else {
-    vol = getVolume();
+    // OBS音声モードが有効で接続中ならOBSミキサーのレベルを、そうでなければ自前マイクを使う。
+    // どちらも線形マグニチュード(0..1)なので、以降のノイズフロア/感度判定は共通で通せる
+    vol = (!isObsMode && obsWs.enabled && OBSWS.isConnected())
+      ? OBSWS.getLevel(obsWs.inputName)
+      : getVolume();
     lastVol = vol;
     // 定常ノイズ分をしきい値に上乗せする（ノイズが無ければフロアは0で従来と同じ）
     const floor = updateNoiseFloor(vol, dt);
@@ -1334,6 +1362,10 @@ function drawDebugOverlay() {
     `vol: ${lastVol.toFixed(3)} / floor: ${noiseFloor.value.toFixed(3)} (sensitivity: ${cfg.sensitivity})`,
     `status: ${micDebugMsg}`,
   ];
+  if (obsWs.enabled) {
+    lines.push(`obs-ws: ${OBSWS.getState()}${OBSWS.getStatusMsg() ? ' (' + OBSWS.getStatusMsg() + ')' : ''}`);
+    lines.push(`obs-src: ${obsWs.inputName || 'すべて'}`);
+  }
   cx.font = '14px monospace';
   const lineH = 18;
   const w = 360;
@@ -2062,6 +2094,93 @@ async function applyRemoteImages(payload) {
   rebuildCurrentMode();
 }
 
+// ── OBS音声（obs-websocket）UI ────────────────────────────────
+// OBSのミキサー音声で口パクさせるための接続UI。送信側（通常UI）でのみ動作する。
+function connectObsWs() {
+  const statEl = document.getElementById('obsws-status');
+  const btnEl  = document.getElementById('obsws-connect');
+  OBSWS.connect(obsWs.url, obsWs.password, {
+    onState:  (state, msg) => renderObsWsState(statEl, btnEl, state, msg),
+    onInputs: (list) => rebuildObsInputSelect(document.getElementById('obsws-input'), list),
+  });
+}
+
+function renderObsWsState(statEl, btnEl, state, msg) {
+  const label = { disconnected: '未接続', connecting: '接続中…', connected: '接続済み', error: 'エラー' }[state] || state;
+  if (statEl) {
+    statEl.textContent = msg ? `${label}：${msg}` : label;
+    statEl.className   = 'hint-text obsws-status obsws-' + state;
+  }
+  if (btnEl) btnEl.textContent = (state === 'connected' || state === 'connecting') ? '切断' : '接続';
+}
+
+function rebuildObsInputSelect(sel, list) {
+  if (!sel) return;
+  const prev = obsWs.inputName;
+  sel.innerHTML = '';
+  const optAll = document.createElement('option');
+  optAll.value = '';
+  optAll.textContent = 'すべての音声ソース';
+  sel.appendChild(optAll);
+  for (const inp of list) {
+    const o = document.createElement('option');
+    o.value = o.textContent = inp.inputName;
+    sel.appendChild(o);
+  }
+  // 保存済みの選択を復元（一覧に無ければ「すべて」のまま）
+  sel.value = list.some(i => i.inputName === prev) ? prev : '';
+  obsWs.inputName = sel.value;
+}
+
+function setupObsWsUI() {
+  const cb   = document.getElementById('obsws-enable');
+  const url  = document.getElementById('obsws-url');
+  const pass = document.getElementById('obsws-pass');
+  const sel  = document.getElementById('obsws-input');
+  const btn  = document.getElementById('obsws-connect');
+  const stat = document.getElementById('obsws-status');
+  if (!cb || isObsMode) return;   // 受信ページ・iPhoneページでは使わない
+
+  // 保存済み設定をUIへ反映
+  cb.checked = obsWs.enabled;
+  url.value  = obsWs.url;
+  pass.value = obsWs.password;
+  rebuildObsInputSelect(sel, []);
+  renderObsWsState(stat, btn, OBSWS.getState(), '');
+
+  const doConnect = () => {
+    obsWs.url      = url.value.trim() || 'ws://127.0.0.1:4455';
+    obsWs.password = pass.value;
+    saveObsWsSettings();
+    connectObsWs();
+  };
+
+  cb.addEventListener('change', () => {
+    obsWs.enabled = cb.checked;
+    saveObsWsSettings();
+    resetNoiseFloor();               // 音源が切り替わるのでフロア学習をやり直す
+    if (obsWs.enabled) {
+      if (audio.active) stopMic();   // OBS音声を使うのでこのブラウザのマイクは止める
+      doConnect();
+    } else {
+      OBSWS.disconnect();            // マイク判定へ戻す（マイクは必要時に手動/自動で開始）
+    }
+  });
+
+  btn.addEventListener('click', () => {
+    const s = OBSWS.getState();
+    if (s === 'connected' || s === 'connecting') OBSWS.disconnect();
+    else doConnect();
+  });
+
+  url.addEventListener('change',  () => { obsWs.url = url.value.trim(); saveObsWsSettings(); });
+  pass.addEventListener('change', () => { obsWs.password = pass.value; saveObsWsSettings(); });
+  sel.addEventListener('change',  () => { obsWs.inputName = sel.value; saveObsWsSettings(); });
+
+  // 有効状態で起動したときは自動接続する
+  if (obsWs.enabled) doConnect();
+}
+
 // 起動処理の締め（boot内の各分岐から呼ぶ）
 function finishBoot() {
   // 送信側のみ: 前回終了時の設定を復元（画像復元の後に行うことが重要）
@@ -2160,6 +2279,8 @@ async function restoreAutoImages() {
 async function boot() {
   initCanvas();
   setupUI();
+  loadObsWsSettings();
+  setupObsWsUI();
   vfillEl = document.getElementById('vfill');
   setupResumeOnInteraction();
   cleanupOPFSTempFiles();
