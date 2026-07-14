@@ -38,18 +38,18 @@ const audio = {
   ctx:            null,
   analyser:       null,
   compressor:     null,
-  gainNode:       null,
   recGainNode:    null,
   recDestination: null,
   stream:         null,
   active:         false,
 };
 
-// 口パク判定用の信号は配信向け/収録向け共通でDynamicsCompressor+メイクアップゲインを
-// 通し、底上げ・平準化する（PC使用時に両モードの感度が揃うようにするため）。
-// 'high'(収録向け)は録音用の信号にも別途メイクアップゲインをかける
-const MIC_DETECT_COMPRESSOR = { threshold: -60, knee: 0, ratio: 12, attack: 0.003, release: 0.25 };
-const MIC_DETECT_MAKEUP_GAIN = 2;
+// 口パク判定は配信向け/収録向け共通でマイク入力を無加工のままアナライザーに渡す
+// （AGCはgetUserMedia側で常時ONのため、これで両モードともWindows標準相当の
+// レベル感になる。コンプレッサーで底上げすると無音時のノイズまで持ち上がり、
+// 無音でも口パクし続ける原因になっていた）。
+// 'high'(収録向け)は録音用の信号にのみ別途DynamicsCompressor+メイクアップゲインをかける
+const MIC_RECORD_COMPRESSOR  = { threshold: -60, knee: 0, ratio: 12, attack: 0.003, release: 0.25 };
 const MIC_RECORD_MAKEUP_GAIN = 6;
 let audioBuf = null;
 let micDebugMsg = '未開始';
@@ -786,22 +786,20 @@ async function startMic() {
     audioBuf = new Uint8Array(audio.analyser.fftSize);
     const source = audio.ctx.createMediaStreamSource(audio.stream);
 
-    // 判定用チェーンは配信向け/収録向け共通（PC上での感度差をなくすため）
-    audio.compressor = audio.ctx.createDynamicsCompressor();
-    audio.compressor.threshold.value = MIC_DETECT_COMPRESSOR.threshold;
-    audio.compressor.knee.value      = MIC_DETECT_COMPRESSOR.knee;
-    audio.compressor.ratio.value     = MIC_DETECT_COMPRESSOR.ratio;
-    audio.compressor.attack.value    = MIC_DETECT_COMPRESSOR.attack;
-    audio.compressor.release.value   = MIC_DETECT_COMPRESSOR.release;
-    source.connect(audio.compressor);
-
-    audio.gainNode = audio.ctx.createGain();
-    audio.gainNode.gain.value = MIC_DETECT_MAKEUP_GAIN;
-    audio.compressor.connect(audio.gainNode).connect(audio.analyser);
+    // 判定は配信向け/収録向け共通で無加工のまま（Windows標準相当のレベル感にする）
+    source.connect(audio.analyser);
 
     if (cfg.micQuality === 'high') {
-      // 録音される音声トラックも同じコンプレッサーを通し、別ゲインで底上げする
+      // 録音される音声トラックのみコンプレッサー+メイクアップゲインで底上げする
       // （'voice'は録音時に無加工ストリームを使うため、ここでは分岐しない）
+      audio.compressor = audio.ctx.createDynamicsCompressor();
+      audio.compressor.threshold.value = MIC_RECORD_COMPRESSOR.threshold;
+      audio.compressor.knee.value      = MIC_RECORD_COMPRESSOR.knee;
+      audio.compressor.ratio.value     = MIC_RECORD_COMPRESSOR.ratio;
+      audio.compressor.attack.value    = MIC_RECORD_COMPRESSOR.attack;
+      audio.compressor.release.value   = MIC_RECORD_COMPRESSOR.release;
+      source.connect(audio.compressor);
+
       audio.recGainNode = audio.ctx.createGain();
       audio.recGainNode.gain.value = MIC_RECORD_MAKEUP_GAIN;
       audio.recDestination = audio.ctx.createMediaStreamDestination();
@@ -824,10 +822,9 @@ function stopMic() {
   if (!audio.active) return;
   clearTimeout(micReconnectTimer);
   audio.stream?.getTracks().forEach(t => t.stop());
-  audio.gainNode?.disconnect();
   audio.recGainNode?.disconnect();
   audio.compressor?.disconnect();
-  audio.stream = audio.analyser = audio.compressor = audio.gainNode = audio.recGainNode = audio.recDestination = null;
+  audio.stream = audio.analyser = audio.compressor = audio.recGainNode = audio.recDestination = null;
   audioBuf = null;
   audio.active = false;
   updateMicBtn(false);
