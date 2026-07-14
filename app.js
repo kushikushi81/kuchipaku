@@ -978,6 +978,15 @@ async function startRecording() {
   }
 }
 
+// iOS/Android等のモバイル端末か判定する（Web Share APIをモバイル限定にするため）。
+// Client Hints非対応エンジン（Safari等）はUA文字列でフォールバック判定する
+function isMobileDevice() {
+  if (navigator.userAgentData && typeof navigator.userAgentData.mobile === 'boolean') {
+    return navigator.userAgentData.mobile;
+  }
+  return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+}
+
 function stopRecording() {
   if (!rec.active || !rec.mediaRecorder) return;
   // 保存ダイアログ(showSaveFilePicker)は「ユーザー操作の直後」しか開けない。
@@ -1082,8 +1091,12 @@ async function saveRecording() {
     }
   }
 
-  // iOS では Web Share API でネイティブ共有シートを開く（カメラロール保存可）
-  if (navigator.canShare) {
+  // iOS/Androidでは Web Share API でネイティブ共有シートを開く（カメラロール保存可）。
+  // デスクトップ（Brave等、File System Access API非対応のブラウザを含む）では
+  // 共有シートを経由せず、直接ダウンロードへ進む（Web Share自体はデスクトップの
+  // 一部Chromium系ブラウザにも実装されており、そのまま使うとOSの共有ウィンドウが
+  // 開いてしまいユーザーが混乱するため）
+  if (isMobileDevice() && navigator.canShare) {
     const file = new File([blob], fileName, { type: mimeType });
     try {
       if (navigator.canShare({ files: [file] })) {
