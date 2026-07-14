@@ -45,9 +45,9 @@ const audio = {
   active:         false,
 };
 
-// 'high'(収録向け)はAGCが効きにくく入力レベルが環境によって大きくばらつくため、
-// 口パク判定用・録音用それぞれの信号をDynamicsCompressor+メイクアップゲインで
-// 底上げ・平準化する（判定用と録音用で別々のゲイン値を使う）
+// 口パク判定用の信号は配信向け/収録向け共通でDynamicsCompressor+メイクアップゲインを
+// 通し、底上げ・平準化する（PC使用時に両モードの感度が揃うようにするため）。
+// 'high'(収録向け)は録音用の信号にも別途メイクアップゲインをかける
 const MIC_DETECT_COMPRESSOR = { threshold: -60, knee: 0, ratio: 12, attack: 0.003, release: 0.25 };
 const MIC_DETECT_MAKEUP_GAIN = 2;
 const MIC_RECORD_MAKEUP_GAIN = 6;
@@ -785,26 +785,27 @@ async function startMic() {
     audio.analyser.fftSize = 256;
     audioBuf = new Uint8Array(audio.analyser.fftSize);
     const source = audio.ctx.createMediaStreamSource(audio.stream);
+
+    // 判定用チェーンは配信向け/収録向け共通（PC上での感度差をなくすため）
+    audio.compressor = audio.ctx.createDynamicsCompressor();
+    audio.compressor.threshold.value = MIC_DETECT_COMPRESSOR.threshold;
+    audio.compressor.knee.value      = MIC_DETECT_COMPRESSOR.knee;
+    audio.compressor.ratio.value     = MIC_DETECT_COMPRESSOR.ratio;
+    audio.compressor.attack.value    = MIC_DETECT_COMPRESSOR.attack;
+    audio.compressor.release.value   = MIC_DETECT_COMPRESSOR.release;
+    source.connect(audio.compressor);
+
+    audio.gainNode = audio.ctx.createGain();
+    audio.gainNode.gain.value = MIC_DETECT_MAKEUP_GAIN;
+    audio.compressor.connect(audio.gainNode).connect(audio.analyser);
+
     if (cfg.micQuality === 'high') {
-      audio.compressor = audio.ctx.createDynamicsCompressor();
-      audio.compressor.threshold.value = MIC_DETECT_COMPRESSOR.threshold;
-      audio.compressor.knee.value      = MIC_DETECT_COMPRESSOR.knee;
-      audio.compressor.ratio.value     = MIC_DETECT_COMPRESSOR.ratio;
-      audio.compressor.attack.value    = MIC_DETECT_COMPRESSOR.attack;
-      audio.compressor.release.value   = MIC_DETECT_COMPRESSOR.release;
-      source.connect(audio.compressor);
-
-      audio.gainNode = audio.ctx.createGain();
-      audio.gainNode.gain.value = MIC_DETECT_MAKEUP_GAIN;
-      audio.compressor.connect(audio.gainNode).connect(audio.analyser);
-
       // 録音される音声トラックも同じコンプレッサーを通し、別ゲインで底上げする
+      // （'voice'は録音時に無加工ストリームを使うため、ここでは分岐しない）
       audio.recGainNode = audio.ctx.createGain();
       audio.recGainNode.gain.value = MIC_RECORD_MAKEUP_GAIN;
       audio.recDestination = audio.ctx.createMediaStreamDestination();
       audio.compressor.connect(audio.recGainNode).connect(audio.recDestination);
-    } else {
-      source.connect(audio.analyser);
     }
     audio.active = true;
     updateMicBtn(true);
