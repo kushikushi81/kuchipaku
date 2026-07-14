@@ -63,6 +63,7 @@ const rec = {
   startTime:     0,
   timerInterval: null,
   mimeType:      '',
+  savePicker:    null,   // 停止クリック時に開いた保存ダイアログの結果Promise（{handle} または {error}）
   // OPFS（長時間録画）関連
   worker:        null,
   useOPFS:       false,
@@ -936,6 +937,7 @@ async function startRecording() {
     const mimeType = getSupportedMimeType();
 
     rec.chunks       = [];
+    rec.savePicker   = null;
     rec.worker       = null;
     rec.useOPFS      = false;
     rec.opfsFileName = null;
@@ -980,6 +982,20 @@ async function startRecording() {
 
 function stopRecording() {
   if (!rec.active || !rec.mediaRecorder) return;
+  // 保存ダイアログ(showSaveFilePicker)は「ユーザー操作の直後」しか開けない。
+  // onstop以降に呼ぶと操作の有効期限が切れてSecurityErrorになり共有シートへ
+  // フォールバックしてしまうため、停止クリックのこの時点で先に開いておき、
+  // 選ばれた保存先ハンドルへ録画データ確定後(saveRecording)に書き込む
+  if (window.showSaveFilePicker) {
+    const mimeType = rec.mimeType || 'video/mp4';
+    const baseMime = mimeType.split(';')[0].trim();
+    const ext      = baseMime === 'video/mp4' ? 'mp4' : 'webm';
+    const fileName = `kuchipaku-${new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-')}.${ext}`;
+    rec.savePicker = window.showSaveFilePicker({
+      suggestedName: fileName,
+      types: [{ description: '動画ファイル', accept: { [baseMime]: [`.${ext}`] } }],
+    }).then(handle => ({ handle }), error => ({ error }));
+  }
   rec.mediaRecorder.stop();
   rec.active = false;
   stopRecordTimer();
@@ -1017,6 +1033,7 @@ async function saveRecording() {
   const fileName = `kuchipaku-${new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-')}.${ext}`;
 
   const opfsFileName = rec.opfsFileName;
+  const savePicker   = rec.savePicker;
   let blob;
   if (rec.useOPFS && rec.worker) {
     blob = await finalizeOPFSRecording(mimeType);
@@ -1024,6 +1041,7 @@ async function saveRecording() {
     blob = new Blob(rec.chunks, { type: mimeType });
   }
   rec.chunks       = [];
+  rec.savePicker   = null;
   rec.worker       = null;
   rec.useOPFS      = false;
   rec.opfsFileName = null;
@@ -1034,28 +1052,35 @@ async function saveRecording() {
     await removeOPFSFile(opfsFileName);
     return;
   }
+  if (blob.size === 0) {
+    // 空ファイルを黙って保存しない（原因の心当たりをユーザーに提示する）
+    alert('録画データが空でした（0バイト）。\nマイクと画面表示が有効な状態で再度お試しください。');
+    await removeOPFSFile(opfsFileName);
+    return;
+  }
 
   reportRecordedResolution(blob);
 
-  // Windows等のデスクトップ（File System Access API対応）では保存先を選択するダイアログを表示
-  if (window.showSaveFilePicker) {
-    const baseMime = mimeType.split(';')[0].trim();
-    try {
-      const handle = await window.showSaveFilePicker({
-        suggestedName: fileName,
-        types: [{ description: '動画ファイル', accept: { [baseMime]: [`.${ext}`] } }],
-      });
-      const writable = await handle.createWritable();
-      await writable.write(blob);
-      await writable.close();
-      await removeOPFSFile(opfsFileName);
-      return;
-    } catch (e) {
-      if (e.name === 'AbortError') {
+  // Windows等のデスクトップ: 停止クリック時に開いた保存ダイアログの結果を待って書き込む
+  if (savePicker) {
+    const result = await savePicker;
+    if (result.handle) {
+      try {
+        const writable = await result.handle.createWritable();
+        await writable.write(blob);
+        await writable.close();
         await removeOPFSFile(opfsFileName);
         return;
+      } catch (e) {
+        // 書き込み失敗時は共有シート/ダウンロードへフォールバック
+        console.warn('保存先への書き込みに失敗:', e);
       }
-      console.warn('showSaveFilePicker failed:', e);
+    } else if (result.error && result.error.name === 'AbortError') {
+      // 保存ダイアログのキャンセル＝録画データの破棄
+      await removeOPFSFile(opfsFileName);
+      return;
+    } else {
+      console.warn('showSaveFilePicker failed:', result.error);
     }
   }
 
